@@ -1,0 +1,24 @@
+service apex_check /system/bin/sh /system/bin/config_launcher.sh apex_check
+    user root
+    group root
+    oneshot
+    seclabel u:r:su:s0
+
+service boot_guardian /system/bin/sh /system/bin/config_launcher.sh boot_guardian
+    user root
+    group root
+    oneshot
+    seclabel u:r:su:s0
+
+service success_reset /system/bin/apex_reset.sh
+    user root
+    group root
+    oneshot
+    seclabel u:r:su:s0
+
+on late-fs
+    start boot_guardian
+    start apex_check
+
+on property:sys.boot_completed=1
+    start success_reset

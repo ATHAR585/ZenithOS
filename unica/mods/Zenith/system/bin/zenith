@@ -1,0 +1,3760 @@
+﻿#!/system/bin/sh
+# ==============================================================================
+#  Z E N I T H   M O D U L A R   C O R E
+#  PHOENIX - BETA BUILD
+#  Created by @szucsy92 & @A1X31
+# ==============================================================================
+
+# [ID CHECK & COLORS - UNCHANGED]
+[ "$(id -u)" -ne 0 ] && exec su -c "sh $0 $@"
+
+ORANGE='\033[38;5;214m'
+YELLOW='\033[1;33m'
+PURPLE='\033[38;5;141m'
+LIGHT_GREEN='\033[1;32m'
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+RED='\033[0;31m'
+GRAY='\033[0;90m'
+NC='\033[0m'
+
+# ==============================================================================
+# ZENITH CORE PATHS
+# ==============================================================================
+
+ZENITH_BASE="/data/adb/zenith"
+ZENITH_STAGING="$ZENITH_BASE/staging"
+ZENITH_CONFIG="$ZENITH_BASE/configs"
+ZENITH_LOGS="$ZENITH_BASE/logs"
+ZENITH_MODULES="$ZENITH_BASE/modules"
+ZENITH_GAMES="$ZENITH_BASE/games"
+
+SERVICE_D="/data/adb/service.d"
+
+mkdir -p \
+    "$ZENITH_BASE" \
+    "$ZENITH_STAGING" \
+    "$ZENITH_CONFIG" \
+    "$ZENITH_LOGS" \
+    "$ZENITH_MODULES" \
+    "$ZENITH_GAMES" \
+    "$SERVICE_D"
+
+# ==============================================================================
+# MODULE BLOCKS AREA - IDE MÁSOLD A MODULOKAT!
+# ==============================================================================
+
+# ==============================================================================
+#  [ MODUL: CLEAR TOOLS - DEEP CLEAN EDITION ]
+# ==============================================================================
+
+clear_tools_menu() {
+    local status=$( [ -d "/data/adb" ] && echo -ne "${LIGHT_GREEN}[ACTIVE]${NC}" || echo -ne "${RED}[INACTIVE]${NC}" )
+    echo -e "${ORANGE} ${1})${NC}  CLEAR TOOLS           $status"
+}
+
+clear_tools_run() {
+    internal_deep_cleaner() {
+        local base_dir="$1"
+        local title="$2"
+        local is_system="$3"
+        local target_dir="$base_dir"
+        
+        [[ "$target_dir" != */modules ]] && [ -d "$target_dir/modules" ] && target_dir="$target_dir/modules"
+        
+        local ad_dir="/data/adb"
+        local upd_dir="/data/adb/modules_update"
+        local protected="ksu modules modules_update service.d post-fs-data.d recovery_backups"
+
+        while true; do
+            hard_clear
+            draw_header "${CYAN}" "$title"
+            
+            if [ ! -d "$target_dir" ]; then 
+                echo -e "${RED}Error: $target_dir not found!${NC}"
+                sleep 1
+                break
+            fi
+
+            local mod_list=""
+            for item in "$target_dir"/*; do 
+                [ -d "$item" ] && [ -f "$item/module.prop" ] && mod_list="$mod_list ${item##*/}" 
+            done
+
+            if [ -z "$mod_list" ]; then 
+                echo -e "${RED}No modules found in: ${target_dir}${NC}"
+                echo -e "\n${YELLOW}b)${NC} Back"
+                read -n 1 tmp
+                break 
+            fi
+
+            set -- $mod_list
+            local count=$#
+            local i=1
+            echo -e "\n${WHITE}Detected Modules in ${target_dir##*/}:${NC}"
+            
+            for mod in "$@"; do
+                local mod_name=$(grep "^name=" "$target_dir/$mod/module.prop" | cut -d= -f2)
+                echo -e " ${ORANGE}$i)${NC} $mod ${GRAY}(${mod_name:-No Name})${NC}"
+                i=$((i+1))
+            done
+
+            echo -e "\n${ORANGE}Options:${NC} ${WHITE}1-$count${NC} (Delete) | ${WHITE}all${NC} | ${WHITE}b${NC} (Back)"
+            echo -n -e "\nSelection: "
+            read choices
+            
+            [ "$choices" = "b" ] || [ "$choices" = "B" ] && break
+
+            for idx in $choices; do
+                local target=""
+                if [ "$idx" = "all" ]; then
+                    targets="$@"
+                elif [ "$idx" -eq "$idx" ] 2>/dev/null; then
+                    eval target="\${$idx}"
+                    targets="$target"
+                fi
+
+                for id in $targets; do
+                    echo -e "\n${RED}Deep Cleaning: $id...${NC}"
+                    local associated_dirs=""
+                    
+                    for folder in "$ad_dir"/*; do
+                        [ ! -d "$folder" ] && continue
+                        local fname="${folder##*/}"
+                        local skip=0
+                        
+                        for p in $protected; do 
+                            [ "$fname" = "$p" ] && skip=1
+                        done
+                        
+                        [ "$skip" -eq 1 ] && continue
+                        
+                        if [[ "$id" == *"$fname"* ]] || [[ "$fname" == *"$id"* ]] || grep -rq "$fname" "$target_dir/$id" 2>/dev/null; then
+                            associated_dirs="$associated_dirs $folder"
+                        fi
+                    done
+                    
+                    rm -rf "$target_dir/$id" "$upd_dir/$id" 2>/dev/null
+                    
+                    for extra in $associated_dirs; do 
+                        echo -e "${YELLOW}  -> Removed linked data: ${extra##*/}${NC}"
+                        rm -rf "$extra" 
+                    done
+                done
+            done
+            
+            echo -e "\n${LIGHT_GREEN}Process completed.${NC}"
+            sleep 1
+        done
+    }
+
+    while true; do
+        hard_clear
+        draw_header "${ORANGE}" "CLEAR TOOLS [MODE: $CORE_FS]"
+
+        if [ "$CORE_FS" = "EXT4" ]; then
+            echo -e "\n${ORANGE}1)${NC} ${WHITE}Manage System Modules (Deep Clean)${NC}"
+            echo -e "${ORANGE}2)${NC} ${WHITE}Manage KSU Modules (Deep Clean)${NC}"
+            echo -e "${ORANGE}3)${NC} ${WHITE}Wipe All (System + Data)${NC}"
+            echo -e "${ORANGE}4)${NC} ${WHITE}Clear Apex & Caches${NC}"
+        else
+            echo -e "\n${ORANGE}1)${NC} ${WHITE}Manage KSU Modules (Deep Clean)${NC}"
+            echo -e "${ORANGE}2)${NC} ${WHITE}Clear Apex & Caches${NC}"
+        fi
+        
+        echo -e "\n${YELLOW}b)${NC} ${WHITE}Back to main menu${NC}"
+        echo -n -e "\nOption: "
+        read subchoice
+
+        case "$subchoice" in
+            b|B) 
+                break 
+                ;;
+            1) 
+                if [ "$CORE_FS" = "EXT4" ]; then
+                    internal_deep_cleaner "/system/usr/share/ksu_modules/adb" "SYSTEM CLEANER" "true"
+                else
+                    internal_deep_cleaner "/data/adb/modules" "DATA CLEANER" "false"
+                fi 
+                ;;
+            2) 
+                if [ "$CORE_FS" = "EXT4" ]; then
+                    internal_deep_cleaner "/data/adb/modules" "DATA CLEANER" "false"
+                else
+                    echo -e "${CYAN}Clearing cache...${NC}"
+                    rm -rf /data/apex/* /cache/* /data/cache/*
+                    sleep 1
+                fi 
+                ;;
+            3) 
+                if [ "$CORE_FS" = "EXT4" ]; then
+                    echo -e "${RED}Total Wipe...${NC}"
+                    rm -rf /data/adb/modules/* "/system/usr/share/ksu_modules/adb/modules"/*
+                    sleep 1
+                fi 
+                ;;
+            4) 
+                if [ "$CORE_FS" = "EXT4" ]; then
+                    echo -e "${CYAN}Clearing cache...${NC}"
+                    rm -rf /data/apex/* /cache/* /data/cache/*
+                    sleep 1
+                fi 
+                ;;
+        esac
+    done
+}
+
+# ==============================================================================
+#  [ MODUL: INJECT SYSTEM / APPLY CHANGES - UNIVERSAL & BULLETPROOF ]
+# ==============================================================================
+
+find_real_system_mount() {
+    # Pontosabb és robusztusabb keresés a /proc/mounts alapján
+    local mount_point
+    mount_point=$(grep -E ' /system | /system_root | / ' /proc/mounts | awk '{print $2}' | head -n 1)
+    echo "${mount_point:-/system}"
+}
+
+run_sys_rw() {
+    SYSTEM_MOUNT=$(find_real_system_mount)
+    echo -e "${CYAN} -> Attempting to mount system to RW: $SYSTEM_MOUNT...${NC}"
+
+    # 1. Lépés: Alapértelmezett remount próbálkozás
+    mount -o remount,rw "$SYSTEM_MOUNT" 2>/dev/null
+
+    # 2. Lépés: Ha nem írható, megpróbáljuk feloldani a block device-t és a chattr-t
+    if ! grep " $SYSTEM_MOUNT " /proc/mounts | grep -q "rw"; then
+        local dev
+        dev=$(grep " $SYSTEM_MOUNT " /proc/mounts | awk '{print $1}' | head -n 1)
+        if [ -n "$dev" ] && [ -b "$dev" ]; then
+            echo 0 > "/sys/block/$(basename "$dev")/queue/read_only" 2>/dev/null
+            mount -o rw,remount "$dev" "$SYSTEM_MOUNT" 2>/dev/null
+        fi
+    fi
+
+    # Végső ellenőrzés
+    if grep " $SYSTEM_MOUNT " /proc/mounts | grep -q "rw"; then
+        return 0
+    fi
+
+    echo -e "${YELLOW}[ZENITH] Physical RW remount not possible (Dynamic/EROFS protection).${NC}"
+    return 1
+}
+
+run_sys_ro() {
+    SYSTEM_MOUNT=$(find_real_system_mount)
+    [ -z "$SYSTEM_MOUNT" ] && return 1
+
+    mount -o remount,ro "$SYSTEM_MOUNT" 2>/dev/null
+
+    # Biztonságos visszaállítás ellenőrzése
+    if grep " $SYSTEM_MOUNT " /proc/mounts | grep -q " ro"; then
+        return 0
+    fi
+    return 1
+}
+
+check_sys_inj() {
+    local STAGING_DIR="$ZENITH_STAGING"
+    local SYS_KSUMOD_DIR="/system/usr/share/ksu_modules/adb"
+    local FALLBACK_FLAG="/data/adb/service.d/.zenith_sys_fallback"
+
+    if [ -f "$FALLBACK_FLAG" ]; then
+        echo -ne "${LIGHT_GREEN}[ACTIVE (VIRTUAL)]${NC}"
+    elif [ "$CORE_FS" = "EXT4" ] && [ -d "$SYS_KSUMOD_DIR" ]; then
+        echo -ne "${LIGHT_GREEN}[ACTIVE (DIRECT)]${NC}"
+    else
+        # Ha bármi van a staging könyvtárban (pl. felbontás vagy zenith_turbo.sh) -> sárga jelzés
+        if [ -d "$STAGING_DIR" ] && [ "$(ls -A "$STAGING_DIR" 2>/dev/null)" ]; then
+            echo -ne "${YELLOW}[STAGING]${NC}"
+        # Ha a service.d-ben már ott pihen a turbo vagy a többi rögzített komponens -> aktív zöld
+        elif [ -f "$SERVICE_D/zenith_turbo.sh" ] || [ -f "$SERVICE_D/zenith_res_fix.sh" ] || [ -f "$SERVICE_D/boot_guardian.sh" ]; then
+            echo -ne "${LIGHT_GREEN}[ACTIVE]${NC}"
+        else
+            echo -ne "${RED}[INACTIVE]${NC}"
+        fi
+    fi
+}
+
+inject_system_menu() {
+    local label=$([ "$CORE_FS" = "EXT4" ] && echo "INJECT SYSTEM" || echo "APPLY CHANGES")
+    printf " ${YELLOW}${1})${NC}  %-21s %b\n" "$label" "$(check_sys_inj)"
+}
+
+atomic_copy() {
+    local src="$1"
+    local dest_dir="$2"
+    local filename
+    filename=$(basename "$src")
+
+    # Biztosítjuk a célmappát és feloldjuk az esetleges attribútum zárat
+    mkdir -p "$dest_dir" 2>/dev/null
+    chattr -i "$dest_dir/$filename" 2>/dev/null
+
+    # Ideiglenes fájlként másoljuk (Atomic move technika)
+    if cp -af "$src" "$dest_dir/$filename.tmp"; then
+        mv -f "$dest_dir/$filename.tmp" "$dest_dir/$filename"
+        chmod 755 "$dest_dir/$filename" 2>/dev/null
+        return 0
+    fi
+    return 1
+}
+
+inject_system_run() {
+    local STAGING="$ZENITH_STAGING"
+    local RES_STAGE="$ZENITH_STAGING/resolution.conf"
+    local TURBO_STAGE="$ZENITH_STAGING/zenith_turbo.sh"
+    local SYS_KSUMOD_DIR="/system/usr/share/ksu_modules/adb"
+    local FALLBACK_FLAG="/data/adb/service.d/.zenith_sys_fallback"
+
+    hard_clear
+    draw_header "${YELLOW}" "APPLYING ALL CHANGES"
+
+    # Korábbi fallback jelzők takarítása
+    rm -f "$FALLBACK_FLAG" 2>/dev/null
+
+    # --- 1. SCRIPT INJEKTÁLÁSOK (/data/adb/service.d) ---
+
+    # Boot/Apex Guardians
+    if [ -f "$STAGING/boot_guardian.sh" ] || [ -f "$STAGING/apex_check.sh" ]; then
+        echo -e "${CYAN} -> Inject: Boot/Apex Guardians...${NC}"
+        [ -f "$STAGING/boot_guardian.sh" ] && atomic_copy "$STAGING/boot_guardian.sh" "$SERVICE_D"
+        [ -f "$STAGING/apex_check.sh" ] && atomic_copy "$STAGING/apex_check.sh" "$SERVICE_D"
+    fi
+
+    # Turbo Hub Tweaks (zenith_turbo.sh átemelése a stagingből a service.d alá)
+    if [ -f "$TURBO_STAGE" ]; then
+        echo -e "${CYAN} -> Injecting Turbo Hub tweaks...${NC}"
+        atomic_copy "$TURBO_STAGE" "$SERVICE_D"
+    fi
+
+    # Resolution Settings
+    if [ -f "$RES_STAGE" ]; then
+        echo -e "${CYAN} -> Preparing resolution correction...${NC}"
+        atomic_copy "$RES_STAGE" "$SERVICE_D"
+        mv -f "$SERVICE_D/resolution.conf" "$SERVICE_D/zenith_res.conf" 2>/dev/null
+        chmod 644 "$SERVICE_D/zenith_res.conf"
+
+        echo -e "#!/system/bin/sh\nuntil wm size >/dev/null 2>&1; do sleep 5; done\n[ -f '$SERVICE_D/zenith_res.conf' ] && . '$SERVICE_D/zenith_res.conf' && wm size \$S && wm density \$D" > "$SERVICE_D/zenith_res_fix.sh"
+        chmod 755 "$SERVICE_D/zenith_res_fix.sh"
+    fi
+
+    # --- 2. RENDSZER INJEKTÁLÁS (Közvetlen vagy Fallback) ---
+    # Megjegyzés: A 'find' szűrő automatikusan fel fogja kapni a frissen bemásolt zenith_turbo.sh-t is,
+    # mivel kizárólag a 'zenith_res_fix.sh' futásidejű script van belőle kizárva!
+    if [ "$CORE_FS" = "EXT4" ]; then
+        echo -e "${ORANGE} -> EXT4 detected: Starting direct copy...${NC}"
+
+        if run_sys_rw; then
+            # SIKERES RW: Közvetlen fizikai másolás végrehajtása
+            chattr -R -i "$SYS_KSUMOD_DIR" 2>/dev/null
+            mkdir -p "$SYS_KSUMOD_DIR/service.d"
+
+            cp -a /data/adb/[!z]* "$SYS_KSUMOD_DIR/" 2>/dev/null
+
+            find "$SERVICE_D/" -maxdepth 1 -type f \
+                ! -name 'zenith_res_fix.sh' \
+                -exec cp -a {} "$SYS_KSUMOD_DIR/service.d/" \; 2>/dev/null
+
+            rm -rf "$SYS_KSUMOD_DIR/ksu" 2>/dev/null
+
+            run_sys_ro
+            echo -e "${LIGHT_GREEN} -> SUCCESS: Physical System Injection completed.${NC}"
+        else
+            # SIKERTELEN RW: Automatikus virtuális injektálás (Smart Fallback)
+            echo -e "${YELLOW} -> Physical write blocked. Activating Smart Fallback...${NC}"
+
+            local VIRTUAL_SYS="/data/adb/zenith_system_mirror"
+            mkdir -p "$VIRTUAL_SYS/service.d"
+
+            cp -a /data/adb/[!z]* "$VIRTUAL_SYS/" 2>/dev/null
+            find "$SERVICE_D/" -maxdepth 1 -type f \
+                ! -name 'zenith_res_fix.sh' \
+                -exec cp -a {} "$VIRTUAL_SYS/service.d/" \; 2>/dev/null
+            rm -rf "$VIRTUAL_SYS/ksu" 2>/dev/null
+
+            echo -e "#!/system/bin/sh\nmkdir -p $SYS_KSUMOD_DIR\nmount --bind $VIRTUAL_SYS $SYS_KSUMOD_DIR" > "$SERVICE_D/00_zenith_sys_mounter.sh"
+            chmod 755 "$SERVICE_D/00_zenith_sys_mounter.sh"
+            touch "$FALLBACK_FLAG"
+
+            echo -e "${LIGHT_GREEN} -> SUCCESS: Virtual injection enabled (Mount-on-boot).${NC}"
+        fi
+    fi
+
+    # --- 3. TAKARÍTÁS ÉS JELZÉS ---
+    [ -n "$STAGING" ] && [ -d "$STAGING" ] && rm -rf "$STAGING"/*
+
+    echo -e "\n${LIGHT_GREEN}All changes applied successfully!${NC}"
+
+    if [ -f "$FALLBACK_FLAG" ]; then
+        echo -e "${WHITE}Changes in virtual mirror, activated at boot.${NC}"
+    elif [ "$CORE_FS" = "EXT4" ] && [ -d "$SYS_KSUMOD_DIR" ]; then
+        echo -e "${WHITE}Modules synced directly to /system.${NC}"
+    else
+        echo -e "${WHITE}All scripts are active in /data/adb/service.d.${NC}"
+    fi
+
+    sleep 2
+}
+
+# ==============================================================================
+#  [ MODUL: RESOLUTION CONTROLLER - CONSOLIDATED ]
+# ==============================================================================
+
+resolution_menu() {
+    local cur=$(wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1)
+    local RES_STAGE="$ZENITH_STAGING/resolution.conf"
+    local alert=$([ -f "$RES_STAGE" ] && echo -ne " ${YELLOW}[STAGED]${NC}" || echo -ne "")
+
+    printf " ${PURPLE}${1})${NC}  %-21s ${CYAN}[%s]${NC}%b\n" "RESOLUTION" "$cur" "$alert"
+}
+
+resolution_run() {
+    local RES_STAGE="$ZENITH_STAGING/resolution.conf"
+    local RES_LIVE="$SERVICE_D/zenith_res.conf"
+
+    apply_res_internal() {
+        local new_s="$1"
+        local new_d="$2"
+        local old_s=$(wm size | grep -oE '[0-9]+x[0-9]+' | tail -1)
+        local old_d=$(wm density | grep -oE '[0-9]+' | tail -1)
+
+        wm size "$new_s"
+        wm density "$new_d"
+
+        local count=10
+        while [ $count -gt 0 ]; do
+            hard_clear
+            draw_header "${PURPLE}" "CONFIRM RESOLUTION"
+            echo -e "\n${WHITE} New: ${CYAN}$new_s (${new_d} DPI)${NC}"
+            echo -e "${WHITE} Reverting in: ${RED}$count seconds...${NC}"
+            echo -e "\n${YELLOW}[k]${NC} Keep (Save to Staging)"
+            echo -e "${YELLOW}[r]${NC} Revert Now"
+
+            read -t 1 confirm
+            case "$confirm" in
+                k|K) 
+                    echo "S=$new_s" > "$RES_STAGE"
+                    echo "D=$new_d" >> "$RES_STAGE"
+                    echo -e "\n${LIGHT_GREEN}Resolution staged! Use 'Apply Changes' to finalize.${NC}"
+                    sleep 1
+                    return 
+                    ;;
+                r|R) 
+                    break 
+                    ;;
+            esac
+            count=$((count-1))
+        done
+
+        wm size "$old_s"
+        wm density "$old_d"
+        echo -e "\n${YELLOW}Changes reverted.${NC}"
+        sleep 1
+    }
+
+    while true; do
+        local cur_res=$(wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1)
+        local cur_dpi=$(wm density 2>/dev/null | grep -oE '[0-9]+' | tail -1)
+
+        hard_clear
+        draw_header "${PURPLE}" "RESOLUTION MANAGER"
+        echo -e "\n${WHITE} Current Live: ${CYAN}$cur_res ${WHITE}($cur_dpi DPI)${NC}"
+
+        echo -e "\n${PURPLE}Presets:${NC}"
+        echo -e " ${YELLOW}1)${NC} HD+  (720x1520)  - 280 DPI"
+        echo -e " ${YELLOW}2)${NC} FHD+ (1080x2280) - 420 DPI"
+        echo -e " ${YELLOW}3)${NC} Reset to Default (Safe)"
+        echo -e " ${YELLOW}4)${NC} ${WHITE}Manual Input (Custom)${NC}"
+        echo -e "\n${YELLOW}b)${NC} Back"
+
+        echo -n -e "\nOption: "
+        read res_choice
+        case "$res_choice" in
+            1) 
+                apply_res_internal "720x1520" "280" 
+                ;;
+            2) 
+                apply_res_internal "1080x2280" "420" 
+                ;;
+            3) 
+                wm size reset
+                wm density reset
+                rm -f "$RES_STAGE" "$RES_LIVE" "$SERVICE_D/zenith_res_fix.sh" 2>/dev/null
+                echo -e "${LIGHT_GREEN}System defaults restored.${NC}"
+                sleep 1 
+                ;;
+            4)
+                echo -e "\n${CYAN}--- Resolution & Density Settings ---${NC}"
+                echo -n -e "${WHITE}Enter Size (WxH) [e.g. 1080x2280]: ${NC}"
+                read m_s
+                echo -n -e "${WHITE}Enter Density [e.g. 420]: ${NC}"
+                read m_d
+
+                if echo "$m_s" | grep -qE '^[0-9]+x[0-9]+$' && echo "$m_d" | grep -qE '^[0-9]+$'; then
+                    apply_res_internal "$m_s" "$m_d"
+                else
+                    echo -e "${RED}Invalid format!${NC}"
+                    sleep 2
+                fi 
+                ;;
+            b|B) 
+                break 
+                ;;
+        esac
+    done
+}
+
+# ==============================================================================
+#  [ MODUL: PROTECTION WIZARD ]
+# ==============================================================================
+
+protection_menu() {
+    local STG_BOOT="$ZENITH_STAGING/boot_guardian.sh"
+    local STG_APEX="$ZENITH_STAGING/apex_check.sh"
+    local LIVE_BOOT="$SERVICE_D/boot_guardian.sh"
+    local SYS_BOOT="/system/bin/boot_guardian.sh"
+
+    local TARGET=""
+    if [ -f "$STG_BOOT" ]; then 
+        TARGET="$STG_BOOT"
+    elif [ -f "$LIVE_BOOT" ]; then 
+        TARGET="$LIVE_BOOT"
+    else 
+        TARGET="$SYS_BOOT"
+    fi
+
+    local cur_val="OFF"
+    if [ -f "$TARGET" ]; then
+        if grep -q "BOOT limit" "$TARGET"; then
+            # Tiszta AWK: megkeresi a kommentet, kikeresi a -gt melletti számot és hozzáad egyet
+            cur_val=$(awk '/BOOT limit/{f=1} f && /-gt/{for(i=1;i<=NF;i++) if($i=="-gt"){print $(i+1)+1; exit}}' "$TARGET" 2>/dev/null)
+        else
+            cur_val=$(grep -oE -- "\<NEW_VAL\> -gt [0-9]+" "$TARGET" 2>/dev/null | head -1 | awk '{print $3 + 1}')
+        fi
+        [ -z "$cur_val" ] && cur_val="ERR"
+    fi
+
+    local alert=""
+    if [ -f "$STG_BOOT" ] || [ -f "$STG_APEX" ]; then
+        alert=" ${YELLOW}[STAGED]${NC}"
+    fi
+
+    printf " ${LIGHT_GREEN}${1})${NC}  %-21s ${CYAN}[BOOT LIMIT: %s]${NC}%b\n" "PROTECTION WIZARD" "$cur_val" "$alert"
+}
+
+protection_run() {
+    local STG_BOOT="$ZENITH_STAGING/boot_guardian.sh"
+    local STG_APEX="$ZENITH_STAGING/apex_check.sh"
+    local LIVE_BOOT="$SERVICE_D/boot_guardian.sh"
+    local LIVE_APEX="$SERVICE_D/apex_check.sh"
+    local SYS_BOOT="/system/bin/boot_guardian.sh"
+    local SYS_APEX="/system/bin/apex_check.sh"
+
+    get_val() {
+        local file_path="$1"
+        local anchor="$2"
+        local f=""
+        
+        for loc in "$file_path" "$(echo "$file_path" | sed "s|$ZENITH_STAGING|$SERVICE_D|")" "$(echo "$file_path" | sed "s|$ZENITH_STAGING|/system/bin|")"; do
+            if [ -f "$loc" ]; then 
+                f="$loc"
+                break
+            fi
+        done
+
+        [ -z "$f" ] && echo "N/A" && return
+
+        local val=""
+        if grep -q "$anchor" "$f"; then
+            # Escapelt AWK a belső függvényhíváshoz, opció-biztosan
+            val=$(awk "/$anchor/{f=1} f && /-gt/{for(i=1;i<=NF;i++) if(\$i==\"-gt\"){print \$(i+1)+1; exit}}" "$f" 2>/dev/null)
+        else
+            val=$(grep -oE -- "\<${anchor}\> -gt [0-9]+" "$f" 2>/dev/null | head -1 | awk '{print $3 + 1}')
+        fi
+        echo "${val:-?}"
+    }
+
+    while true; do
+        local CUR_B=$(get_val "$STG_BOOT" "BOOT limit")
+        local CUR_A=$(get_val "$STG_APEX" "VAL")
+
+        hard_clear
+        draw_header "${LIGHT_GREEN}" "PROTECTION CONFIGURATION"
+
+        if [ -f "$STG_BOOT" ]; then
+            echo -e "${YELLOW}STATUS: ${ORANGE}[STAGING PENDING]${NC}"
+        elif [ -f "$LIVE_BOOT" ] || [ -f "$LIVE_APEX" ]; then
+            echo -e "${YELLOW}STATUS: ${LIGHT_GREEN}[LIVE ACTIVE]${NC}"
+        elif [ -f "$SYS_BOOT" ]; then
+            echo -e "${YELLOW}STATUS: ${CYAN}[SYSTEM DEFAULT]${NC}"
+        else
+            echo -e "${YELLOW}STATUS: ${RED}[NOT FOUND]${NC}"
+        fi
+
+        echo -e "\n${PURPLE}VALUES (Trigger at >= X):${NC}"
+        echo -e "-> Boot Limit (Recovery):  ${CYAN}$CUR_B${NC}"
+        echo -e "-> Apex Limit (Wipe):      ${CYAN}$CUR_A${NC}"
+        echo -e "${ORANGE}\nOPTIONS:${NC} [s] Set | [r] Full Reset | [b] Back"
+        echo -n -e "\nSelection: "
+        read choice
+
+        case "$choice" in
+            b|B) 
+                break 
+                ;;
+            r|R) 
+                rm -f "$STG_BOOT" "$STG_APEX" "$LIVE_BOOT" "$LIVE_APEX"
+                echo -e "${RED}User configs cleared. System defaults remain.${NC}"
+                sleep 1 
+                ;;
+            s|S)
+                [ ! -f "$STG_BOOT" ] && { [ -f "$LIVE_BOOT" ] && cp "$LIVE_BOOT" "$STG_BOOT" || [ -f "$SYS_BOOT" ] && cp "$SYS_BOOT" "$STG_BOOT"; }
+                [ ! -f "$STG_APEX" ] && { [ -f "$LIVE_APEX" ] && cp "$LIVE_APEX" "$STG_APEX" || [ -f "$SYS_APEX" ] && cp "$SYS_APEX" "$STG_APEX"; }
+
+                if [ ! -f "$STG_BOOT" ]; then
+                    cat << 'EOF' > "$STG_BOOT"
+#!/system/bin/sh
+FILE="/data/local/tmp/boot_attempts"
+MOD_DIR="/data/adb/modules"
+PSTORE_DIR="/sys/fs/pstore"
+mount -o remount,rw /data 2>/dev/null
+[ ! -f "$FILE" ] && echo 0 > "$FILE"
+VAL=$(cat "$FILE")
+KERNEL_CRASH=0
+if [ -d "$PSTORE_DIR" ]; then
+    if grep -qiE "kernel panic|fatal exception|overlayfs|magic_mount|EXT4-fs error|F2FS-fs error|Device or resource busy" "$PSTORE_DIR"/* 2>/dev/null; then
+        KERNEL_CRASH=1
+    fi
+fi
+if [ "$KERNEL_CRASH" -eq 1 ]; then
+    NEW_VAL=4
+    [ -d "$MOD_DIR/hybrid_mount" ] && touch "$MOD_DIR/hybrid_mount/disable"
+else
+    NEW_VAL=$((VAL + 1))
+fi
+echo "$NEW_VAL" > "$FILE"
+
+# Action: Wipe APEX cache and disable problematic modules (Level 1)
+# (Zenith Manager targets this line for APEX trigger)
+if [ $NEW_VAL -gt 1 ]; then
+    rm -rf /data/apex/active/*
+    rm -rf /data/apex/backup/*
+fi
+
+# Action: Reboot to Recovery for manual intervention (Level 2)
+# (Zenith Manager targets this line for BOOT limit)
+if [ $NEW_VAL -gt 4 ]; then
+    echo 0 > "$FILE"
+    reboot recovery
+fi
+EOF
+                fi
+
+                if [ ! -f "$STG_APEX" ]; then
+                    cat << 'EOF' > "$STG_APEX"
+#!/system/bin/sh
+FILE="/data/local/tmp/boot_attempts"
+[ ! -f $FILE ] && exit 0
+VAL=$(cat $FILE)
+if [ $VAL -gt 1 ]; then
+    mount -o remount,rw /data
+    rm -rf /data/apex/active/*
+    rm -rf /data/apex/backup/*
+    rm -rf /data/dalvik-cache/*
+fi
+EOF
+                fi
+
+                echo -n "New Boot Limit (2-9): "
+                read b_in
+                echo -n "New Apex Limit (2-9): "
+                read a_in
+
+                if echo "$b_in" | grep -q '^[2-9]$' && echo "$a_in" | grep -q '^[2-9]$'; then
+                    local B_HEX=$((b_in - 1))
+                    local A_HEX=$((a_in - 1))
+
+                    sed -i "/BOOT limit/,/-gt/s/-gt [0-9]*/-gt $B_HEX/" "$STG_BOOT"
+                    sed -i "/APEX trigger/,/-gt/s/-gt [0-9]*/-gt $A_HEX/" "$STG_BOOT"
+                    sed -i "s/\<VAL\> -gt [0-9]*/VAL -gt $A_HEX/g" "$STG_APEX"
+
+                    chmod 755 "$STG_BOOT" "$STG_APEX"
+                    echo -e "${LIGHT_GREEN}Stored in staging!${NC}"
+                    sleep 1
+                else
+                    echo -e "${RED}Invalid input.${NC}"
+                    sleep 1
+                fi 
+                ;;
+        esac
+    done
+}
+
+# ==============================================================================
+#  [ (🟣) ZENITH USERSPACE GOVERNOR FRAMEWORK - PRODUCTION GRADE ] 
+# ==============================================================================
+
+# Tier 1 IPC (RAMFS / tmpfs)
+IPC_DIR="/dev/zenith_ipc"
+METRICS_FILE="$IPC_DIR/metrics.state"
+THERM_STATE_FILE="$IPC_DIR/therm_state"
+TOUCH_STATE="$IPC_DIR/touch.state"
+
+ENGINE_SCRIPT="/data/local/tmp/zenith_engine.sh"
+DISPATCHER_SCRIPT="/data/local/tmp/zenith_dispatcher.sh"
+SUPERVISOR_SCRIPT="/data/local/tmp/zenith_supervisor.sh"
+KERNEL_LOG="/data/local/tmp/zenith_kernel.log"
+KERNEL_MODE="/data/local/tmp/zenith_mode"
+
+Z_GREEN='\033[38;5;46m'
+Z_CYAN='\033[38;5;51m'
+Z_YELLOW='\033[38;5;226m'
+Z_PURPLE='\033[38;5;141m'
+Z_ORANGE='\033[38;5;214m'
+Z_RED='\033[38;5;196m'
+Z_WHITE='\033[38;5;231m'
+NC='\033[0m'
+
+hard_clear() { printf "\033[2J\033[H"; }
+draw_header() { 
+    local color="$1" ; local title="$2"
+    echo -e "${color}====================================================${NC}"
+    echo -e "${color}  ${title}${NC}"
+    echo -e "${color}====================================================${NC}"
+}
+
+check_turbo() {
+    if [ -n "$SERVICE_D" ] && [ -f "$SERVICE_D/zenith_turbo.sh" ]; then 
+        printf "%b" "${Z_GREEN}[ACTIVE]${NC}"
+    elif [ -f "$ZENITH_STAGING/zenith_turbo.sh" ]; then 
+        printf "%b" "${Z_YELLOW}[STAGED]${NC}"
+    else 
+        printf "%b" "${Z_RED}[OFF]${NC}"
+    fi
+}
+
+init_ipc_layer() {
+    mkdir -p "$IPC_DIR" "$ZENITH_STAGING" 2>/dev/null
+    chmod 755 "$IPC_DIR" 2>/dev/null
+}
+
+is_zenith_running() {
+    local pidf="/data/local/tmp/zenith_supervisor.pid"
+    [ ! -f "$pidf" ] && return 1
+    local pid="" ; read -r pid < "$pidf" 2>/dev/null
+    [ -z "$pid" ] && return 1
+    if [ -d "/proc/$pid" ]; then
+        local cmdline=$(tr -d '\0' < "/proc/$pid/cmdline" 2>/dev/null)
+        case "$cmdline" in *zenith_supervisor*|*zenith_engine*|*zenith_dispatcher*) return 0 ;; esac
+    fi
+    return 1
+}
+
+zenith_kill_all() {
+    echo -e "\n${Z_RED}Stopping Zenith stack (hard sync)...${NC}"
+
+    # 1. PID file alapú kill
+    for f in zenith_engine zenith_dispatcher zenith_supervisor; do
+        local pidf="/data/local/tmp/${f}.pid"
+        if [ -f "$pidf" ]; then
+            local pid=""
+            read -r pid < "$pidf" 2>/dev/null
+            [ -n "$pid" ] && kill "$pid" 2>/dev/null
+        fi
+    done
+
+    # 2. Szigorú ".sh" szűrés, hogy véletlenül se ölje meg a menüt futtató shellt
+    pkill -f "zenith_engine.sh" 2>/dev/null
+    pkill -f "zenith_dispatcher.sh" 2>/dev/null
+    pkill -f "zenith_supervisor.sh" 2>/dev/null
+
+    sleep 1
+
+    # 3. Kernel limitek visszaállítása
+    [ -w "/dev/cpuset/top-app/cpus" ] && echo "0-7" > /dev/cpuset/top-app/cpus 2>/dev/null
+    [ -w "/dev/stune/top-app/schedtune.boost" ] && echo "0" > /dev/stune/top-app/schedtune.boost 2>/dev/null
+
+    # 4. Teljes IPC és fájl wipe
+    rm -rf "$IPC_DIR" 2>/dev/null
+    rm -f /data/local/tmp/zenith_*.pid 2>/dev/null
+    rm -f /data/local/tmp/zenith_*.err 2>/dev/null
+    rm -f "$ZENITH_STAGING/zenith_turbo.sh" "$SERVICE_D/zenith_turbo.sh" 2>/dev/null
+}
+
+toggle_turbo_system() {
+    init_ipc_layer
+
+    # JAVÍTOTT: Kizárólag a biztos fájlokat és a validált futást nézi, nincs nyers pgrep
+    if is_zenith_running || [ -f "$ZENITH_STAGING/zenith_turbo.sh" ] || [ -f "$SERVICE_D/zenith_turbo.sh" ]; then
+        
+        zenith_kill_all
+
+        echo "1" > "$KERNEL_MODE" 2>/dev/null
+        sync
+
+        echo -e "${Z_GREEN}Zenith FULL STOP complete. Daemon is [OFF].${NC}"
+        sleep 0.5
+        return
+    fi
+
+    # --- BEKAPCSOLÁSI (START) ÁG ---
+    echo -e "\n${Z_YELLOW}Starting Zenith stack (clean boot)...${NC}"
+
+    init_ipc_layer
+    rm -f /data/local/tmp/zenith_*.pid
+
+    cat > "$ZENITH_STAGING/zenith_turbo.sh" << 'EOF'
+#!/system/bin/sh
+until [ "$(getprop sys.boot_completed)" = "1" ] && [ "$(getprop init.svc.surfaceflinger)" = "running" ]; do sleep 2; done
+
+renice -10 $(pidof surfaceflinger) 2>/dev/null
+renice -6 $(pidof system_server) 2>/dev/null
+setprop sys.lmk.minfree_levels "18432,23040,27648,32256,55296,80640" 2>/dev/null
+
+sh /data/local/tmp/zenith_supervisor.sh >/dev/null 2>&1 &
+EOF
+
+    chmod 755 "$ZENITH_STAGING/zenith_turbo.sh"
+    
+    echo -e "${Z_YELLOW}Daemon [STAGED]. Ready for injection.${NC}"
+    sleep 0.5
+
+    # ======================================================================
+    # [ (🟢) COMPONENT 1: ENGINE - ZERO-FORK & PID CACHE ]
+    # ======================================================================
+     cat > "$ENGINE_SCRIPT" << 'EOF'
+#!/system/bin/sh
+trap 'rm -f /data/local/tmp/zenith_engine.pid' EXIT
+echo $$ > "/data/local/tmp/zenith_engine.pid"
+exec 2>> /data/local/tmp/zenith_engine.err
+
+BOOT_WAIT=0
+while [ "$(getprop sys.boot_completed)" != "1" ] || [ "$(getprop init.svc.surfaceflinger)" != "running" ]; do
+    BOOT_WAIT=$((BOOT_WAIT + 1))
+    [ "$BOOT_WAIT" -gt 45 ] && break
+    sleep 2
+done
+
+IPC_DIR="/dev/zenith_ipc"
+METRICS_FILE="$IPC_DIR/metrics.state"
+TOUCH_STATE="$IPC_DIR/touch.state"
+
+TZ_CACHE=""
+for zone in /sys/class/thermal/thermal_zone*; do
+    [ -d "$zone" ] || continue
+    read -r TYPE < "$zone/type" 2>/dev/null
+    TYPE_L=$(echo "$TYPE" | tr '[:upper:]' '[:lower:]')
+    w=0
+    case "$TYPE_L" in
+        *big*|*cpu-big*|*mngs*) w=4 ;; *mid*) w=3 ;; *little*) w=2 ;; *gpu*|*g3d*) w=3 ;; *soc*|*ap*|*cpu*|*exynos*) w=3 ;;
+    esac
+    [ "$w" -gt 0 ] && [ -f "$zone/temp" ] && TZ_CACHE="$TZ_CACHE $zone/temp:$w"
+done
+
+GPU_FREQ_PATH=""
+for g in /sys/class/devfreq/*mali* /sys/devices/platform/*mali* /sys/class/misc/mali0/device /sys/kernel/gpu; do
+    for f in cur_freq clock gpu_clock cur_clock frequency; do
+        if [ -f "$g/$f" ]; then GPU_FREQ_PATH="$g/$f"; break 2; fi
+    done
+done
+
+GPU_BUSY_PATH=""
+for g in /sys/class/devfreq/*mali* /sys/devices/platform/*mali* /sys/kernel/gpu; do
+    for f in gpu_busy utilization load; do
+        if [ -f "$g/$f" ]; then GPU_BUSY_PATH="$g/$f"; break 2; fi
+    done
+done
+
+read_soc_temp() {
+    local total=0 ; local weight=0
+    for item in $TZ_CACHE; do
+        local path="${item%:*}" ; local w="${item#*:}"
+        local raw_t="" ; read -r raw_t < "$path" 2>/dev/null
+        [ -n "$raw_t" ] || continue
+        local TEMP=$raw_t
+        if [ "$TEMP" -gt 1000 ]; then TEMP=$((TEMP / 1000))
+        elif [ "$TEMP" -gt 200 ]; then TEMP=$((TEMP / 10)); fi
+        total=$((total + TEMP * w))
+        weight=$((weight + w))
+    done
+    [ "$weight" -eq 0 ] && echo 0 && return
+    echo $((total / weight))
+}
+
+(
+    # Zero-Block Input Abstraction
+    TOUCH_DEV=""
+    for dev in /dev/input/event*; do
+        if getevent -p "$dev" 2>/dev/null | grep -q "ABS_MT_POSITION"; then
+            TOUCH_DEV="$dev"
+            break
+        fi
+    done
+    
+    if [ -n "$TOUCH_DEV" ]; then
+        while getevent -qlc 1 "$TOUCH_DEV" >/dev/null 2>&1; do
+            read -r uptime _ < /proc/uptime
+            echo "${uptime%.*}" > "$TOUCH_STATE" 2>/dev/null
+        done
+    fi
+) &
+
+get_foreground_pkg() {
+    local top_pid=$(head -n 1 /dev/cpuset/top-app/tasks 2>/dev/null)
+    if [ -n "$top_pid" ] && [ -f "/proc/$top_pid/cmdline" ]; then
+        tr -d '\0' < "/proc/$top_pid/cmdline" 2>/dev/null | cut -d':' -f1
+    else
+        echo "NORMAL"
+    fi
+}
+
+: > "$TOUCH_STATE"
+
+LAST_FOCUS_CHECK=0
+LAST_HEARTBEAT=0
+LAST_TOP_PID=""
+LAST_CMDLINE="NORMAL"
+FOCUS_PKG="NORMAL"
+LAST_HASH=""
+LAST_PROF=""
+SEQ=0
+LAST_IOWAIT=0
+LAST_TOTAL=0
+LAST_IDLE=0
+CPU_EMA=0
+
+FOCUS_CHECK_INTERVAL=2
+
+while true; do
+    read -r uptime _ < /proc/uptime
+    NOW="${uptime%.*}"
+
+    # PID Cache: Zero-Fork App profiler
+    if [ $((NOW - LAST_FOCUS_CHECK)) -ge "$FOCUS_CHECK_INTERVAL" ]; then
+        if read -r TOP_PID < /dev/cpuset/top-app/tasks 2>/dev/null; then
+            if [ "$TOP_PID" != "$LAST_TOP_PID" ]; then
+                if read -r cmdline < "/proc/$TOP_PID/cmdline" 2>/dev/null; then
+                    LAST_CMDLINE="$cmdline"
+                fi
+                LAST_TOP_PID="$TOP_PID"
+            fi
+        fi
+        FOCUS_PKG="$LAST_CMDLINE"
+        LAST_FOCUS_CHECK=$NOW
+    fi
+
+    case "$FOCUS_PKG" in
+        *camera*|*imaging*|*gallery*|*snapchat*|*instagram*|*tiktok*|*photo*|*semgallery*) PROF="SUSTAIN" ;;
+        *youtube*|*netflix*|*vlc*|*player*|*hulu*|*disney*|*prime*|*video*|*vando*|*twitch*) PROF="SUSTAIN" ;;
+        *unity*|*unreal*|*genshin*|*pubg*|*codm*|*roblox*|*supercell*|*mojang*|*game*|*tencent*|*ea*|*epicgames*) PROF="BURST" ;;
+        *benchmark*|*antutu*|*geekbench*|*3dmark*|*passmark*|*cpuid*) PROF="BURST" ;;
+        *) PROF="NORMAL" ;;
+    esac
+
+    read -r cpu u n s id io irq sirq steal guest guest_nice < /proc/stat
+    total=$((u + n + s + id + io + irq + sirq + steal + guest + guest_nice))
+    idle=$((id + io))
+    
+    diff_total=$((total - LAST_TOTAL))
+    diff_idle=$((idle - LAST_IDLE))
+    if [ "$diff_total" -gt 0 ]; then
+        RAW_USAGE=$(( (diff_total - diff_idle) * 100 / diff_total ))
+        CPU_EMA=$(( (CPU_EMA * 7 + RAW_USAGE * 3) / 10 ))
+    else
+        RAW_USAGE=0
+    fi
+    CPU_USAGE=$CPU_EMA
+    LAST_TOTAL=$total
+    LAST_IDLE=$idle
+
+    # Zero-Fork Memory Pressure Check
+    MEM_STALL=0
+    if read -r _ some_line < /proc/pressure/memory 2>/dev/null; then
+        case "$some_line" in
+            *avg10=*)
+                avg10="${some_line#*avg10=}" ; avg10="${avg10%% *}" ; mem_val="${avg10%.*}"
+                [ "${mem_val:-0}" -gt 20 ] && MEM_STALL=1
+                ;;
+        esac
+    fi
+
+    # Zero-Fork IO Pressure Check
+    IO_STALL=0
+    if read -r _ line < /proc/pressure/io 2>/dev/null; then
+        case "$line" in
+            *avg10=*)
+                tmp="${line#*avg10=}" ; tmp="${tmp%% *}" ; io_b="${tmp%.*}"
+                [ "${io_b:-0}" -gt 15 ] && IO_STALL=1
+                ;;
+        esac
+    else
+        if [ "$LAST_IOWAIT" -gt 0 ]; then
+            io_delta=$((io - LAST_IOWAIT))
+            [ "$io_delta" -lt 0 ] && io_delta=0
+            [ "$io_delta" -gt 50 ] && IO_STALL=1
+        fi
+        LAST_IOWAIT=$io
+    fi
+
+    SOC_TEMP=$(read_soc_temp)
+    
+    STAT=0
+    if [ -f /sys/class/power_supply/battery/status ]; then
+        T="" ; read -r T < /sys/class/power_supply/battery/status 2>/dev/null
+        case "$T" in [Cc]harging*|[Ff]ull*) STAT=1 ;; esac
+    fi
+
+    CUR_SCREEN=0
+    BRIGHTNESS_PCT=0
+    for bl in /sys/class/backlight/*/brightness; do
+        [ -f "$bl" ] || continue
+        br="" ; read -r br < "$bl" 2>/dev/null
+        if [ "${br:-0}" -gt 0 ]; then 
+            CUR_SCREEN=1
+            max_bl="${bl%brightness}max_brightness"
+            max_br=255
+            [ -f "$max_bl" ] && read -r max_br < "$max_bl" 2>/dev/null
+            [ "${max_br:-255}" -eq 0 ] && max_br=255
+            BRIGHTNESS_PCT=$((br * 100 / max_br))
+            break 
+        fi
+    done
+
+    G_FREQ="0"
+    if [ -n "$GPU_FREQ_PATH" ] && [ -f "$GPU_FREQ_PATH" ]; then
+        read -r raw_g < "$GPU_FREQ_PATH" 2>/dev/null
+        case "$raw_g" in
+            ''|*[!0-9]*) G_FREQ=0 ;;
+            *)
+                if [ "$raw_g" -ge 1000000 ]; then G_FREQ=$((raw_g / 1000000))
+                elif [ "$raw_g" -ge 1000 ]; then G_FREQ=$((raw_g / 1000))
+                else G_FREQ=$raw_g ; fi
+            ;;
+        esac
+    fi
+
+    # Zero-Fork GPU Load 
+    GPU_LOAD=0
+    if [ -n "$GPU_BUSY_PATH" ] && [ -f "$GPU_BUSY_PATH" ]; then
+        read -r raw_gb < "$GPU_BUSY_PATH" 2>/dev/null
+        case "$raw_gb" in
+            *" "*)
+                g_busy="${raw_gb% *}" ; g_total="${raw_gb#* }"
+                if [ "${g_total:-0}" -gt 0 ]; then GPU_LOAD=$((g_busy * 100 / g_total)); fi
+                ;;
+            *)
+                clean_load="${raw_gb%% *}" ; clean_load="${clean_load%.*}"
+                [ -n "$clean_load" ] && GPU_LOAD="$clean_load"
+                ;;
+        esac
+    fi
+
+    STATE_HASH=$((SOC_TEMP*131 + G_FREQ*17 + CPU_USAGE*7 + GPU_LOAD*3 + IO_STALL*5 + MEM_STALL*2))
+    
+    if [ "$STATE_HASH" != "$LAST_HASH" ] || [ "$PROF" != "$LAST_PROF" ] || [ $((NOW - LAST_HEARTBEAT)) -ge 10 ]; then
+        LAST_HASH="$STATE_HASH"
+        LAST_PROF="$PROF"
+        LAST_HEARTBEAT=$NOW
+        SEQ=$((SEQ + 1))
+        CRC=$((SEQ + SOC_TEMP*3 + G_FREQ*7 + CPU_USAGE*11))
+
+        TMPF="${METRICS_FILE}.$$.tmp"
+        echo "${SEQ}|${SOC_TEMP}|${CUR_SCREEN}|${BRIGHTNESS_PCT}|${G_FREQ}|${GPU_LOAD}|${STAT}|${PROF}|${CPU_USAGE}|${IO_STALL}|${MEM_STALL}|${CRC}" > "$TMPF"
+        mv -f "$TMPF" "$METRICS_FILE" 2>/dev/null
+    fi
+
+    if [ "$PROF" = "BURST" ] || [ "$CPU_USAGE" -ge 80 ] || [ "$GPU_LOAD" -ge 80 ]; then sleep 1
+    else sleep 2; fi
+done
+EOF
+    chmod 755 "$ENGINE_SCRIPT"
+
+    # ======================================================================
+    # [ (🔵) COMPONENT 2: DISPATCHER - TICK SCHEDULER & SEQLOCK ]
+    # ======================================================================
+    cat > "$DISPATCHER_SCRIPT" << 'EOF'
+#!/system/bin/sh
+trap 'rm -f /data/local/tmp/zenith_dispatcher.pid' EXIT
+echo $$ > "/data/local/tmp/zenith_dispatcher.pid"
+exec 2>> /data/local/tmp/zenith_dispatcher.err
+
+KERNEL_LOG="/data/local/tmp/zenith_kernel.log"
+
+get_clean_timestamp() { date +"%y.%m.%d.%H:%M:%S" ; }
+
+safe_write() {
+    local path="$1"
+    local val="$2"
+    [ -w "$path" ] || return
+    if ! echo "$val" > "$path" 2>/dev/null; then
+        echo "$(get_clean_timestamp) | WRITE_FAIL:$path:$val" >> "$KERNEL_LOG"
+    fi
+}
+
+IPC_DIR="/dev/zenith_ipc"
+KERNEL_MODE="/data/local/tmp/zenith_mode"
+LOG_BUF="$IPC_DIR/log.buf"
+THERM_STATE_FILE="$IPC_DIR/therm_state"
+TOUCH_STATE="$IPC_DIR/touch.state"
+METRICS_FILE="$IPC_DIR/metrics.state"
+
+LAST_SEQ=0 ; LAST_OK_SEQ=-1 ; MODEX=1 ; LAST_MODE=1 
+FAST_T=45 ; LAST_FAST_T=45
+LAST_SCREEN_IS_ON=0
+LOG_COUNT=0
+
+HYSTERESIS_TICKS=5
+LAST_CANDIDATE=-1
+CANDIDATE_COUNT=0
+
+THERMAL_SCORE=0
+THERM_HOLD_UNTIL=0
+POST_THERM_RECOVERY_UNTIL=0
+THERMAL_LOCK_UNTIL=0
+LAST_FREQ_COMMIT=0
+
+LAST_BURST_ENTER=0
+INPUT_GRACE_UNTIL=0
+LAST_TOUCH_TS="0"
+
+LAST_DOWNGRADE=0
+MODE_DOWNGRADE_LOCK=10
+NORMAL_UNLOCK_TEMP=57 
+BURST_HEADROOM=62
+
+LAST_GPU_MAX="" ; LAST_GPU_MIN=""
+LAST_P0_MAX="" ; LAST_P4_MAX="" ; LAST_P6_MAX=""
+LAST_P0_MIN="" ; LAST_P4_MIN="" ; LAST_P6_MIN=""
+LAST_CPUSET_STATE="NORMAL"
+FORCE_NORMAL_AT=0
+
+GPU_PATH=""
+for g in /sys/class/devfreq/*mali* /sys/devices/platform/*mali* /sys/kernel/gpu; do
+    if [ -f "$g/max_freq" ]; then GPU_PATH="$g"; break; fi
+    if [ -f "$g/scaling_max_freq" ]; then GPU_PATH="$g"; break; fi
+done
+
+check_touch_state() {
+    [ ! -f "$TOUCH_STATE" ] && return 1
+    local TS=""
+    read -r TS < "$TOUCH_STATE" 2>/dev/null || return 1
+    if [ -n "$TS" ] && [ "$TS" != "$LAST_TOUCH_TS" ]; then
+        LAST_TOUCH_TS="$TS"
+        return 0
+    fi
+    return 1
+}
+
+apply_profile() {
+    local GPU_MAX GPU_MIN P0_MAX P4_MAX P6_MAX P0_MIN P4_MIN P6_MIN
+
+    case "$1" in
+        1) GPU_MAX=455000; GPU_MIN=260000; P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2496000; P0_MIN=300000; P4_MIN=400000; P6_MIN=400000 ;;
+        2) GPU_MAX=572000; GPU_MIN=350000; P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2496000; P0_MIN=400000; P4_MIN=500000; P6_MIN=546000 ;;
+        3) GPU_MAX=572000; GPU_MIN=455000; P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2496000; P0_MIN=500000; P4_MIN=741000; P6_MIN=806000 ;;
+        4) GPU_MAX=340000; GPU_MIN=260000; P0_MAX=1300000; P4_MAX=1560000; P6_MAX=1560000; P0_MIN=300000; P4_MIN=400000; P6_MIN=400000 ;;
+    esac
+    
+    if [ "$1" -eq 4 ] && [ "$LAST_CPUSET_STATE" != "RESTRICTED" ]; then
+        safe_write "/dev/cpuset/top-app/cpus" "0-6"
+        safe_write "/dev/stune/top-app/schedtune.boost" "0"
+        LAST_CPUSET_STATE="RESTRICTED"
+    elif [ "$1" -ne 4 ] && [ "$LAST_CPUSET_STATE" != "NORMAL" ]; then
+        safe_write "/dev/cpuset/top-app/cpus" "0-7"
+        safe_write "/dev/stune/top-app/schedtune.boost" "0"
+        LAST_CPUSET_STATE="NORMAL"
+    fi
+    
+    if [ "$1" -eq 3 ] && [ -w "/dev/stune/top-app/schedtune.boost" ]; then safe_write "/dev/stune/top-app/schedtune.boost" "12"
+    elif [ "$1" -eq 2 ] && [ -w "/dev/stune/top-app/schedtune.boost" ]; then safe_write "/dev/stune/top-app/schedtune.boost" "6"
+    elif [ "$1" -eq 1 ] && [ -w "/dev/stune/top-app/schedtune.boost" ] && [ "$LAST_CPUSET_STATE" = "NORMAL" ]; then safe_write "/dev/stune/top-app/schedtune.boost" "0"; fi
+
+    if [ -n "$GPU_PATH" ]; then
+        if [ "$LAST_GPU_MAX" != "$GPU_MAX" ]; then
+            if [ -f "$GPU_PATH/scaling_max_freq" ]; then safe_write "$GPU_PATH/scaling_max_freq" "$GPU_MAX"
+            elif [ -f "$GPU_PATH/max_freq" ]; then safe_write "$GPU_PATH/max_freq" "$GPU_MAX"; fi
+            LAST_GPU_MAX="$GPU_MAX"
+        fi
+        if [ "$LAST_GPU_MIN" != "$GPU_MIN" ]; then
+            if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "$GPU_PATH/scaling_min_freq" "$GPU_MIN"
+            elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "$GPU_PATH/min_freq" "$GPU_MIN"; fi
+            LAST_GPU_MIN="$GPU_MIN"
+        fi
+    fi
+
+    [ "$LAST_P0_MAX" != "$P0_MAX" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq" "$P0_MAX" ; LAST_P0_MAX="$P0_MAX"; }
+    [ "$LAST_P4_MAX" != "$P4_MAX" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq" "$P4_MAX" ; LAST_P4_MAX="$P4_MAX"; }
+    [ "$LAST_P6_MAX" != "$P6_MAX" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq" "$P6_MAX" ; LAST_P6_MAX="$P6_MAX"; }
+    
+    [ "$LAST_P0_MIN" != "$P0_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq" "$P0_MIN" ; LAST_P0_MIN="$P0_MIN"; }
+    [ "$LAST_P4_MIN" != "$P4_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq" "$P4_MIN" ; LAST_P4_MIN="$P4_MIN"; }
+    [ "$LAST_P6_MIN" != "$P6_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq" "$P6_MIN" ; LAST_P6_MIN="$P6_MIN"; }
+}
+
+> "$LOG_BUF"
+
+while true; do
+    read -r uptime _ < /proc/uptime
+    NOW="${uptime%.*}"
+
+    if check_touch_state; then
+        INPUT_GRACE_UNTIL=$((NOW + 3))
+    fi
+    
+    if [ -s "$METRICS_FILE" ] && IFS='|' read -r SEQ TEMP SCREEN_IS_ON BRIGHTNESS_PCT GPU_FREQ GPU_LOAD C PROF CPU_USAGE IO_STALL MEM_STALL CRC_IN < "$METRICS_FILE" 2>/dev/null; then
+        if [ -n "$SEQ" ] && [ "$SEQ" -gt "$LAST_OK_SEQ" ]; then
+            CALC_CRC=$((SEQ + TEMP*3 + GPU_FREQ*7 + CPU_USAGE*11))
+            if [ "$CRC_IN" -eq "$CALC_CRC" ]; then
+                LAST_OK_SEQ="$SEQ"
+                LAST_SEQ="$SEQ"
+
+                REASON="BASELINE_IDLE"
+
+                if [ "$SCREEN_IS_ON" -eq 1 ] && [ "$LAST_SCREEN_IS_ON" -eq 0 ]; then
+                    FORCE_NORMAL_AT=0
+                    MODEX=1 ; REASON="WAKE_UP_EVENT"
+                    LAST_CANDIDATE=1 ; CANDIDATE_COUNT=$HYSTERESIS_TICKS ; LAST_SCREEN_IS_ON=1
+                elif [ "$SCREEN_IS_ON" -eq 0 ]; then
+                    if [ "$LAST_SCREEN_IS_ON" -eq 1 ]; then
+                        FORCE_NORMAL_AT=$((NOW + 12))
+                    fi
+                    if [ "$FORCE_NORMAL_AT" -gt 0 ] && [ "$NOW" -gt "$FORCE_NORMAL_AT" ]; then
+                        MODEX=1
+                        REASON="FORCE_RECOVERY_IDLE"
+                        CANDIDATE_COUNT=$HYSTERESIS_TICKS
+                    else
+                        MODEX=1 ; REASON="SCREEN_OFF"
+                        LAST_CANDIDATE=1 ; CANDIDATE_COUNT=$HYSTERESIS_TICKS
+                    fi
+                    LAST_SCREEN_IS_ON=0
+                else
+                    LAST_SCREEN_IS_ON="$SCREEN_IS_ON"
+                    LAST_FAST_T=$FAST_T
+                    
+                    if [ "$TEMP" -gt "$FAST_T" ]; then 
+                        FAST_T=$(( (FAST_T * 8 + TEMP * 2) / 10 )) 
+                    else 
+                        FAST_T=$(( (FAST_T * 9 + TEMP * 1) / 10 )) 
+                    fi
+                    DELTA=$((FAST_T - LAST_FAST_T))
+
+                    CHG_OFFSET=0 ; [ "$C" -eq 1 ] && CHG_OFFSET=3
+                    CRIT_LIMIT=$((68 + CHG_OFFSET))
+                    HOT_LIMIT=$((61 + CHG_OFFSET))
+
+                    if [ "$FAST_T" -ge "$CRIT_LIMIT" ]; then TH_STATE="CRIT"
+                    elif [ "$FAST_T" -ge "$HOT_LIMIT" ]; then TH_STATE="HOT"
+                    elif [ "$FAST_T" -ge $((HOT_LIMIT - 4)) ]; then TH_STATE="WARM"
+                    else TH_STATE="NORMAL"; fi
+                    
+                    TMP_TH="${THERM_STATE_FILE}.$$.tmp"
+                    echo "$TH_STATE" > "$TMP_TH"
+                    mv -f "$TMP_TH" "$THERM_STATE_FILE" 2>/dev/null
+
+                    [ "$FAST_T" -ge "$CRIT_LIMIT" ] && THERMAL_SCORE=$((THERMAL_SCORE + 1)) || THERMAL_SCORE=0
+
+                    case "$PROF" in
+                        BURST) 
+                            if [ "$FAST_T" -ge "$BURST_HEADROOM" ]; then MODEX=2 ; REASON="BURST_THERMAL_CAP"
+                            else MODEX=3 ; REASON="APP_PROFILE_BURST" ; fi ;;
+                        SUSTAIN) MODEX=2 ; REASON="APP_PROFILE_SUSTAIN" ;; 
+                        NORMAL)  MODEX=1 ; REASON="IDLE_APP_PROFILE" ;; 
+                    esac
+
+                    OVERRIDE_ACTIVE=0
+                    if [ "$MODEX" -eq 1 ]; then
+                        if [ "$CPU_USAGE" -ge 80 ]; then MODEX=3 ; REASON="HIGH_CPU_LOAD ($CPU_USAGE%)"; OVERRIDE_ACTIVE=1
+                        elif [ "$GPU_LOAD" -ge 80 ]; then MODEX=3 ; REASON="HIGH_GPU_LOAD ($GPU_LOAD%)"; OVERRIDE_ACTIVE=1
+                        elif [ "$IO_STALL" -eq 1 ]; then MODEX=2 ; REASON="IO_STALL_DETECTED"; OVERRIDE_ACTIVE=1
+                        elif [ "$MEM_STALL" -eq 1 ]; then MODEX=2 ; REASON="MEMORY_PSI_PRESSURE"; OVERRIDE_ACTIVE=1
+                        elif [ "$CPU_USAGE" -ge 50 ]; then MODEX=2 ; REASON="MODERATE_CPU_LOAD ($CPU_USAGE%)"; OVERRIDE_ACTIVE=1
+                        fi
+                    fi
+
+                    if [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ] && [ "$FAST_T" -lt 63 ]; then
+                        if [ "$MODEX" -lt 2 ]; then
+                            MODEX=2 ; REASON="TOUCH_INTERACTION_SUSTAIN"
+                            OVERRIDE_ACTIVE=1
+                        fi
+                    fi
+
+                    if [ "$OVERRIDE_ACTIVE" -eq 1 ]; then
+                        LAST_CANDIDATE="$MODEX"
+                        CANDIDATE_COUNT=$HYSTERESIS_TICKS
+                    fi
+                    
+                    BURST_RETENTION=10
+                    [ "$IO_STALL" -eq 1 ] && BURST_RETENTION=0 
+
+                    if [ "$LAST_MODE" -eq 3 ] && [ $((NOW - LAST_BURST_ENTER)) -lt "$BURST_RETENTION" ] && [ "$MODEX" -lt 4 ]; then
+                        MODEX=3 ; REASON="BURST_MIN_RETENTION_LOCK"
+                    fi
+
+                    if [ "$THERMAL_SCORE" -ge 3 ]; then
+                        THERM_HOLD_UNTIL=$((NOW + 45))
+                        THERMAL_LOCK_UNTIL=$((NOW + 30))
+                        RECOVERY_WINDOW=$(( (FAST_T - HOT_LIMIT) * 8 ))
+                        [ "$RECOVERY_WINDOW" -lt 15 ] && RECOVERY_WINDOW=15
+                        [ "$RECOVERY_WINDOW" -gt 60 ] && RECOVERY_WINDOW=60
+                        POST_THERM_RECOVERY_UNTIL=$((NOW + RECOVERY_WINDOW))
+                        MODEX=4 ; REASON="CRITICAL_THERM_SCORE_3"
+                    elif [ "$NOW" -lt "$THERM_HOLD_UNTIL" ]; then 
+                        MODEX=4 ; REASON="THERMAL_HOLD_ACTIVE"
+                    elif [ "$DELTA" -ge 3 ] && [ "$FAST_T" -ge $((HOT_LIMIT - 3)) ]; then 
+                        MODEX=2 ; REASON="TEMP_RISING_FAST"
+                    fi
+
+                    if [ "$MODEX" -eq 3 ] && [ "$NOW" -lt "$THERMAL_LOCK_UNTIL" ]; then
+                        MODEX=2 ; REASON="THERMAL_LOCKOUT_COOLDOWN"
+                    fi
+                fi
+
+                [ "$MODEX" -eq 3 ] && [ "$LAST_MODE" -ne 3 ] && LAST_BURST_ENTER=$NOW
+                if [ "$NOW" -lt "$POST_THERM_RECOVERY_UNTIL" ] && [ "$MODEX" -eq 3 ]; then
+                    MODEX=2 ; REASON="POST_THERMAL_RECOVERY"
+                fi
+                
+                [ "$MODEX" -lt "$LAST_MODE" ] && LAST_DOWNGRADE=$NOW
+                if [ "$MODEX" -gt "$LAST_MODE" ] && [ $((NOW - LAST_DOWNGRADE)) -lt "$MODE_DOWNGRADE_LOCK" ]; then
+                    MODEX="$LAST_MODE" ; REASON="DOWNGRADE_LOCKOUT"
+                fi
+
+                if [ "$MODEX" -eq "$LAST_CANDIDATE" ]; then CANDIDATE_COUNT=$((CANDIDATE_COUNT + 1))
+                else LAST_CANDIDATE="$MODEX" ; CANDIDATE_COUNT=0; fi
+
+                [ "$MODEX" -eq 4 ] && CANDIDATE_COUNT=$HYSTERESIS_TICKS
+                if [ "$CANDIDATE_COUNT" -lt "$HYSTERESIS_TICKS" ]; then
+                    MODEX="$LAST_MODE" ; REASON="AWAITING_HYSTERESIS"
+                fi
+
+                DYN_COOLDOWN=6
+                if [ "$LAST_MODE" -eq 1 ] && [ "$MODEX" -eq 2 ]; then DYN_COOLDOWN=6; fi
+                if [ "$LAST_MODE" -eq 2 ] && [ "$MODEX" -eq 3 ]; then DYN_COOLDOWN=12; fi
+                if [ "$LAST_MODE" -eq 3 ] && [ "$MODEX" -eq 2 ]; then DYN_COOLDOWN=15; fi
+
+                if [ "$MODEX" -ne 4 ] && [ "$MODEX" -ne "$LAST_MODE" ]; then
+                    if [ $((NOW - LAST_FREQ_COMMIT)) -lt "$DYN_COOLDOWN" ]; then
+                        MODEX="$LAST_MODE" ; REASON="AWAITING_COOLDOWN"
+                    fi
+                fi
+                
+                if [ "$MODEX" -eq 1 ] && [ "$FAST_T" -ge "$NORMAL_UNLOCK_TEMP" ]; then
+                    MODEX=2 ; REASON="NORMAL_THERMAL_LOCKOUT"
+                fi
+
+                if [ "$MODEX" -ne "$LAST_MODE" ]; then
+                    apply_profile "$MODEX" 
+                    [ "$LAST_MODE" != "$MODEX" ] && { echo "$MODEX" > "$KERNEL_MODE" 2>/dev/null; }
+                    
+                    LAST_FREQ_COMMIT=$NOW 
+                    echo "$(get_clean_timestamp) | C=$MODEX | T=$FAST_T | IO=$IO_STALL | CPU=$CPU_USAGE | APP=$PROF" >> "$LOG_BUF"
+                    
+                    LOG_COUNT=$((LOG_COUNT + 1))
+                    if [ "$LOG_COUNT" -ge 3 ]; then
+                        cat "$LOG_BUF" >> "$KERNEL_LOG"
+                        > "$LOG_BUF"
+                        LOG_COUNT=0
+                    fi
+                    LAST_MODE="$MODEX"
+                fi
+
+                if [ "$LAST_MODE" -ne 4 ]; then
+                    ACTIVE_P6_MIN="$LAST_P6_MIN"
+                    if [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ]; then
+                        ACTIVE_P6_MIN=1144000
+                    else
+                        case "$LAST_MODE" in
+                            1) ACTIVE_P6_MIN=400000 ;;
+                            2) ACTIVE_P6_MIN=546000 ;;
+                            3) ACTIVE_P6_MIN=806000 ;;
+                        esac
+                    fi
+                    [ "$LAST_P6_MIN" != "$ACTIVE_P6_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq" "$ACTIVE_P6_MIN" ; LAST_P6_MIN="$ACTIVE_P6_MIN"; }
+                fi
+                
+                TOUCH_LIVE=0
+                [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ] && TOUCH_LIVE=1
+                echo "${REASON}|${FAST_T}|${TOUCH_LIVE}" > "${METRICS_FILE}.reason" 2>/dev/null
+            fi
+        fi
+    fi
+
+    if [ "$NOW" -lt "${THERMAL_LOCK_UNTIL:-0}" ]; then
+        usleep 1000000 2>/dev/null || sleep 1
+    elif [ "${LAST_MODE:-1}" -ge 2 ]; then
+        usleep 500000 2>/dev/null || sleep 0.5
+    else
+        usleep 2000000 2>/dev/null || sleep 2
+    fi
+done
+EOF
+    chmod 755 "$DISPATCHER_SCRIPT"
+
+    # ======================================================================
+    # [ (🔴) COMPONENT 3: WATCHDOG SUPERVISOR ]
+    # ======================================================================
+    cat > "$SUPERVISOR_SCRIPT" << 'EOF'
+#!/system/bin/sh
+IPC_DIR="/dev/zenith_ipc"
+LOG_BUF="$IPC_DIR/log.buf"
+KERNEL_LOG="/data/local/tmp/zenith_kernel.log"
+
+sync_log_buffer() {
+    if [ -f "$LOG_BUF" ]; then
+        mv "$LOG_BUF" "${LOG_BUF}.sync" 2>/dev/null
+        cat "${LOG_BUF}.sync" >> "$KERNEL_LOG" 2>/dev/null
+        rm -f "${LOG_BUF}.sync"
+    fi
+}
+
+trap 'sync_log_buffer; rm -f /data/local/tmp/zenith_supervisor.pid' EXIT INT TERM
+echo $$ > "/data/local/tmp/zenith_supervisor.pid"
+exec 2>> /data/local/tmp/zenith_supervisor.err
+
+get_now() {
+    read -r uptime _ < /proc/uptime
+    echo "${uptime%.*}"
+}
+
+E_SCR="/data/local/tmp/zenith_engine.sh" 
+D_SCR="/data/local/tmp/zenith_dispatcher.sh"
+
+spawn_single_daemon() {
+    local script="$1"
+    local local_pidf="${script%.sh}.pid"
+    rm -f "$local_pidf"
+    sh "$script" >/dev/null 2>&1 &
+    sleep 1 
+}
+
+MAX_CRASH=10
+CRASH_E=0
+CRASH_D=0
+RESTART_DELAY=1
+read -r uptime _ < /proc/uptime
+STARTUP_TIME="${uptime%.*}"
+STARTUP_GRACE_UNTIL=$((STARTUP_TIME + 30))
+
+while true; do
+    read -r uptime _ < /proc/uptime
+    NOW="${uptime%.*}"
+    
+    if [ "$NOW" -lt "$STARTUP_GRACE_UNTIL" ]; then sleep 10; continue; fi
+
+    CRASH_HAPPENED=0
+
+    is_alive_e=0
+    pidf_e="${E_SCR%.sh}.pid"
+    if [ -f "$pidf_e" ]; then
+        read -r pid < "$pidf_e" 2>/dev/null
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            comm=$(tr -d '\0' < "/proc/$pid/cmdline" 2>/dev/null)
+            case "$comm" in *zenith_engine*) is_alive_e=1 ;; esac
+        fi
+    fi
+    if [ "$is_alive_e" -eq 0 ]; then 
+        spawn_single_daemon "$E_SCR"
+        CRASH_E=$((CRASH_E + 1))
+        CRASH_HAPPENED=1
+    else
+        [ "$CRASH_E" -gt 0 ] && CRASH_E=$((CRASH_E - 1))
+    fi
+
+    is_alive_d=0
+    pidf_d="${D_SCR%.sh}.pid"
+    if [ -f "$pidf_d" ]; then
+        read -r pid < "$pidf_d" 2>/dev/null
+        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+            comm=$(tr -d '\0' < "/proc/$pid/cmdline" 2>/dev/null)
+            case "$comm" in *zenith_dispatcher*) is_alive_d=1 ;; esac
+        fi
+    fi
+    if [ "$is_alive_d" -eq 0 ]; then 
+        spawn_single_daemon "$D_SCR"
+        CRASH_D=$((CRASH_D + 1))
+        CRASH_HAPPENED=1
+    else
+        [ "$CRASH_D" -gt 0 ] && CRASH_D=$((CRASH_D - 1))
+    fi
+
+    if [ "$CRASH_HAPPENED" -eq 1 ]; then
+        if [ "$CRASH_E" -gt "$MAX_CRASH" ] || [ "$CRASH_D" -gt "$MAX_CRASH" ]; then
+            echo "$(date) | CRITICAL: Watchdog failure cap exceeded (E:$CRASH_E D:$CRASH_D). Suspending." >> "/data/local/tmp/zenith_error.log"
+            exit 1
+        fi
+        sleep $RESTART_DELAY
+        RESTART_DELAY=$((RESTART_DELAY * 2))
+        [ "$RESTART_DELAY" -gt 32 ] && RESTART_DELAY=32
+    else
+        RESTART_DELAY=1 ; sleep 20
+    fi
+done
+EOF
+    chmod 755 "$SUPERVISOR_SCRIPT"
+
+    # --- [FIX 2] SINGLE ENTRYPOINT ---
+    sh "$SUPERVISOR_SCRIPT" >/dev/null 2>&1 &
+
+    echo -e "${Z_GREEN}Zenith FULL START complete.${NC}"
+    sleep 0.5
+}
+
+# ==============================================================================
+# MENU UTILITIES & DASHBOARD (REVAMPED ENGINEERING VIEW)
+# ==============================================================================
+view_turbo_pulse() {
+    LAST_TEMP="0"
+    LAST_GPU="0"
+
+    parse_metrics() {
+        [ ! -f "$METRICS_FILE" ] && return
+        
+        IFS='|' read -r SEQ TEMP CUR_SCREEN BRIGHTNESS_PCT GPU_FREQ GPU_LOAD CHARGING PROFILE CPU_USAGE IO_STALL MEM_STALL CRC_IN < "$METRICS_FILE" 2>/dev/null || return
+        
+        [ -z "$SEQ" ] && return
+        
+        # RAW values
+        SOC_TEMP="$TEMP"
+        SOC_GPU="$GPU_FREQ"
+
+        # Thermal smoothing csak UI-ra
+        if [ -n "$SOC_TEMP" ] && [ "$SOC_TEMP" -gt 0 ]; then
+            LAST_TEMP="$SOC_TEMP"
+        fi
+        TEMP="${LAST_TEMP:-0}"
+
+        if [ -n "$SOC_GPU" ] && [ "$SOC_GPU" -gt 0 ]; then
+            LAST_GPU="$SOC_GPU"
+        fi
+        GPU_FREQ="${LAST_GPU:-0}"
+        
+        MODE=1
+        [ -f "$KERNEL_MODE" ] && read -r MODE < "$KERNEL_MODE" 2>/dev/null
+        THERMAL="NORMAL"
+        [ -f "$THERM_STATE_FILE" ] && read -r THERMAL < "$THERM_STATE_FILE" 2>/dev/null
+        
+        if [ -f "${METRICS_FILE}.reason" ]; then
+            IFS='|' read -r REASON FAST_T TOUCH_LIVE < "${METRICS_FILE}.reason" 2>/dev/null
+        else
+            REASON="UNKNOWN"
+            FAST_T="$TEMP"
+            TOUCH_LIVE=0
+        fi
+    }
+
+    while true; do
+        hard_clear
+        parse_metrics
+
+        echo -e "${Z_CYAN}================================================${NC}"
+        echo -e "${Z_CYAN}       ZENITH EMULATION TELEMETRY        ${NC}"
+        echo -e "${Z_CYAN}================================================${NC}"
+
+        case "$REASON" in
+            *HYSTERESIS*|*COOLDOWN*) DISPLAY_REASON="Mode Stabilization" ;;
+            DOWNGRADE_LOCKOUT) DISPLAY_REASON="Downgrade Protection" ;;
+            TOUCH_INTERACTION_SUSTAIN) DISPLAY_REASON="User Interaction Boost" ;;
+            APP_PROFILE_BURST|BURST_MIN_RETENTION_LOCK) DISPLAY_REASON="Heavy Workload" ;;
+            APP_PROFILE_SUSTAIN) DISPLAY_REASON="Media / Sustained" ;;
+            HIGH_CPU_LOAD*) DISPLAY_REASON="CPU Saturation" ;;
+            MODERATE_CPU_LOAD*) DISPLAY_REASON="Moderate CPU Load" ;;
+            HIGH_GPU_LOAD*) DISPLAY_REASON="GPU Saturation" ;;
+            IO_STALL_DETECTED) DISPLAY_REASON="I/O Congestion" ;;
+            MEMORY_PSI_PRESSURE) DISPLAY_REASON="Memory Pressure" ;;
+            CRITICAL_THERM*) DISPLAY_REASON="Critical Thermal" ;;
+            THERMAL_LOCKOUT_COOLDOWN|THERMAL_HOLD_ACTIVE|POST_THERMAL_RECOVERY) DISPLAY_REASON="Thermal Lockout Window" ;;
+            TEMP_RISING_FAST) DISPLAY_REASON="Rapid Temp Rise" ;;
+            NORMAL_THERMAL_LOCKOUT) DISPLAY_REASON="Idle Lockout" ;;
+            IDLE_APP_PROFILE|BASELINE_IDLE|SCREEN_OFF|WAKE_UP_EVENT|FORCE_RECOVERY_IDLE) DISPLAY_REASON="System Baseline" ;;
+            *) DISPLAY_REASON="${REASON:-Unknown}" ;;
+        esac
+
+        MODE_TXT="UNKNOWN"
+        case "${MODE:-1}" in
+            1) MODE_TXT="${Z_GREEN}IDLE / NORMAL (1)${NC}" ;;
+            2) MODE_TXT="${Z_YELLOW}SUSTAIN (2)${NC}" ;;
+            3) MODE_TXT="${Z_ORANGE}BURST (3)${NC}" ;;
+            4) MODE_TXT="${Z_RED}THERMAL PROTECT (4)${NC}" ;;
+        esac
+
+        THERM_STR="${Z_GREEN}${THERMAL}${NC}"
+        case "$THERMAL" in
+            WARM) THERM_STR="${Z_YELLOW}${THERMAL}${NC}" ;;
+            HOT) THERM_STR="${Z_ORANGE}${THERMAL}${NC}" ;;
+            CRIT) THERM_STR="${Z_RED}${THERMAL}${NC}" ;;
+        esac
+
+        CHARGE_STR="${Z_ORANGE}BATTERY 🔋${NC}"
+        [ "$CHARGING" = "1" ] && CHARGE_STR="${Z_GREEN}CHARGING ⚡${NC}"
+
+        GPU_STR="${Z_RED}OFFLINE${NC}"
+        if [ "${GPU_FREQ:-0}" -gt 0 ] || [ "${GPU_LOAD:-0}" -gt 0 ]; then 
+            GPU_STR="${Z_CYAN}${GPU_FREQ:-0} MHz${NC} (${Z_WHITE}${GPU_LOAD:-0}%${NC})"
+        fi
+
+        local input_stat="${Z_RED}IDLE${NC}"
+        [ "$TOUCH_LIVE" = "1" ] && input_stat="${Z_GREEN}LIVE${NC}"
+
+        TEMP_DISPLAY="${TEMP:---}"
+        FAST_DISPLAY="${FAST_T:---}"
+        [ "$TEMP_DISPLAY" = "0" ] && TEMP_DISPLAY="--"
+        [ "$FAST_DISPLAY" = "0" ] && FAST_DISPLAY="--"
+
+        echo
+        printf " %-14s : %b\n" "SOC Temp" "${Z_YELLOW}${TEMP_DISPLAY}°C${NC} ${Z_PURPLE}(EMA: ${FAST_DISPLAY}°C)${NC}"
+        printf " %-14s : %b\n" "Thermal State" "$THERM_STR"
+        printf " %-14s : %b\n" "Power Source" "$CHARGE_STR"
+        printf " %-14s : %b\n" "Input Status" "$input_stat"
+
+        echo -e "${Z_CYAN}------------------------------------------------${NC}"
+        printf " %-14s : %b\n" "Gov Mode" "$MODE_TXT"
+        printf " %-14s : %b\n" "Active Reason" "${Z_PURPLE}${DISPLAY_REASON}${NC}"
+        printf " %-14s : %b\n" "App Profile" "${Z_CYAN}${PROFILE:-NORMAL}${NC}"
+
+        echo -e "${Z_CYAN}------------------------------------------------${NC}"
+        printf " %-14s : %b\n" "CPU Load" "${Z_PURPLE}${CPU_USAGE:-0}%${NC}"
+        printf " %-14s : %b\n" "GPU State" "$GPU_STR"
+        
+        echo -e "${Z_CYAN}================================================${NC}"
+
+        echo
+    echo -e "\n  ${YELLOW}[ANY KEY]${GRAY} REFRESH          ${YELLOW}[ENTER]${GRAY} EXIT ${NC}\033[K"
+        
+        local refresh_trigger="x"
+        read -s -n 1 refresh_trigger 2>/dev/null
+        if [ -z "$refresh_trigger" ]; then
+            break
+        fi
+    done
+}
+
+pm_optimization() {
+    local PURPLE='\033[38;5;141m' ; local GREEN='\033[38;5;46m'
+    local WHITE='\033[38;5;231m' ; local GRAY='\033[38;5;245m'
+    local YELLOW='\033[38;5;226m' ; local BG='\033[48;2;14;1;28m' ; local NC='\033[0m'
+    local WIDTH=58 ; local HEIGHT=19 ; local INNER_W=$((WIDTH - 2))
+    local TOP_BAR=$(printf '═%.0s' $(seq 1 $INNER_W))
+    local EMPTY_LINE=$(printf ' %.0s' $(seq 1 $INNER_W))
+
+    draw_opt_frame() {
+        local border_col="$1" ; local main_txt="$2" ; local sub_txt="$3"
+        local out="\033[H${border_col}╔${TOP_BAR}╗${NC}\r\n"
+        for y in $(seq 2 $((HEIGHT - 1))); do
+            local line="$EMPTY_LINE"
+            if [ "$y" -eq 9 ] && [ -n "$main_txt" ]; then
+                local text_len=${#main_txt} ; local start=$(( (INNER_W - text_len) / 2 ))
+                line="${EMPTY_LINE:0:$start}${WHITE}${BG}${main_txt}${BG}${EMPTY_LINE:$((start + text_len))}"
+            fi
+            if [ "$y" -eq 11 ] && [ -n "$sub_txt" ]; then
+                local text_len=${#sub_txt} ; local start=$(( (INNER_W - text_len) / 2 ))
+                line="${EMPTY_LINE:0:$start}${GRAY}${BG}${sub_txt}${BG}${EMPTY_LINE:$((start + text_len))}"
+            fi
+            out+="${border_col}║${BG}${line}${NC}${border_col}║${NC}\r\n"
+        done
+        out+="${border_col}╚${TOP_BAR}╝${NC}\r\n"
+        printf "%b" "$out"
+    }
+
+    printf "\033[?25l\033[2J\033[H"
+    draw_opt_frame "$PURPLE" "ZENITH DEXOPT JOB" "Scheduling background optimization"
+    echo -e "\n  ${GRAY}Press ${YELLOW}[ANY KEY]${GRAY} to start or ${YELLOW}[ENTER]${GRAY} to exit...${NC}\033[K"
+
+    local opt_choice
+    read -rsn1 opt_choice
+    if [ -z "$opt_choice" ]; then printf "\033[?25h\033[2J\033[H"; return; fi
+
+    cmd package bg-dexopt-job >/dev/null 2>&1 &
+    local OPT_PID=$!
+    local i=0
+
+    while kill -0 $OPT_PID 2>/dev/null; do
+        local msg=""
+        case $i in
+            0) msg="Analyzing usage patterns..." ;; 1) msg="Running background dexopt..." ;;
+            2) msg="Optimizing frequent paths..." ;; 3) msg="Flushing JIT cache..." ;;
+            4) msg="Compiling hot methods..." ;; 5) msg="Aligning application data..." ;;
+            6) msg="Reducing memory footprint..." ;; 7) msg="Bypassing thermal throttle..." ;;
+            8) msg="Zenith protocol mapping..." ;; 9) msg="Finalizing ART profiles..." ;;
+        esac
+        draw_opt_frame "$PURPLE" "$msg" "Safe heavy lifting in progress..."
+        echo -e "\n  ${GRAY}Do not interrupt. ${YELLOW}[ENTER]${GRAY} to exit...${NC}\033[K"
+        
+        local key=""
+        read -rsn1 -t 4 key 2>/dev/null
+        if [ $? -eq 0 ] && [ -z "$key" ]; then kill -9 $OPT_PID 2>/dev/null; printf "\033[?25h\033[2J\033[H"; return; fi
+        i=$(( (i + 1) % 10 ))
+    done
+
+    printf "\033[2J\033[H" 
+    draw_opt_frame "$GREEN" "Optimization complete." "Background DEXOPT successfully scheduled."
+    echo -e "\n  ${GRAY}Press ${YELLOW}[ENTER]${GRAY} to return to the hub...${NC}\033[K"
+    while true; do
+        local final_key=""
+        read -rsn1 final_key 2>/dev/null
+        if [ $? -ne 0 ] || [ -z "$final_key" ]; then break ; fi
+    done
+    printf "\033[?25h\033[2J\033[H" 
+}
+
+turbo_menu() {
+    printf " ${Z_CYAN}${1})${NC}  %-21s %b\n" "TURBO_UGF" "$(check_turbo)"
+}
+
+turbo_run() {
+    while true; do
+        hard_clear
+        draw_header "${Z_CYAN}" "USERSPACE GOVERNOR FRAMEWORK"
+        echo -e "${Z_CYAN} 1)${NC} ${Z_WHITE}Toggle Vendor Emulation Daemon${NC}  $(check_turbo)"        
+        echo -e "${Z_CYAN} 2)${NC} ${Z_WHITE}Open Live Telemetry Dashboard${NC}"        
+        echo -e "${Z_CYAN} 3)${NC} ${Z_WHITE}Run Safe ART Background Dexopt${NC}"        
+        echo -e "\n${Z_YELLOW} b)${NC} ${Z_WHITE}Return to main menu${NC}"
+
+        echo -n -e "\n Option: "
+        read -r t_choice
+        case "$t_choice" in
+            1) toggle_turbo_system ;;
+            2) view_turbo_pulse ;;
+            3) pm_optimization ;;
+            b|B) break ;;
+            *) echo -e "${Z_RED}Invalid input!${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# ==============================================================================
+#  [ MODULE: ZENITH GAMES 🎮 ]
+# ==============================================================================
+
+games_boot_anim() {
+    local NC='\033[0m'
+    local PURPLE='\033[38;5;141m'
+    local GREEN='\033[38;5;46m'
+    local BLUE='\033[38;5;39m'
+    local YELLOW='\033[38;5;226m'
+    local RED='\033[38;5;196m'
+    local WHITE='\033[97m'
+    local CYAN='\033[38;5;51m'
+
+    hard_clear
+    printf "\033[?25l"
+
+    local frame=0
+
+    while [ $frame -lt 3 ]; do
+        printf "\033[H\n\n"
+
+        if [ $frame -eq 1 ]; then
+            local OUTLINE="$RED"
+        else
+            local OUTLINE="$PURPLE"
+        fi
+
+        # Új, részletesebb és jobban kivehető kontroller forma markolatokkal
+        echo -e "                ${OUTLINE}▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${NC}"
+        echo -e "           ${OUTLINE}▄▄▀▀▀                        ▀▀▀▄▄${NC}"
+        echo -e "        ${OUTLINE}▄▀▀${NC}   ${GREEN}▲${NC}         ${WHITE}▰  ▰${NC}         ${YELLOW}●${NC}      ${OUTLINE}▀▀▄${NC}"
+        echo -e "      ${OUTLINE}▄▀${NC}    ${GREEN}◀   ▶${NC}                  ${RED}●${NC}   ${BLUE}●${NC}    ${OUTLINE}▀▄${NC}"
+        echo -e "    ${OUTLINE}▄▀${NC}        ${GREEN}▼${NC}                      ${GREEN}●${NC}            ${OUTLINE}▀▄${NC}"
+        echo -e "   ${OUTLINE}█${NC}          ${CYAN}◉${NC}                      ${CYAN}◉${NC}          ${OUTLINE}█${NC}"
+        echo -e "    ${OUTLINE}▀▄${NC}          ${OUTLINE}▄▀▀${NC}                      ${OUTLINE}▀▀▄${NC}           ${OUTLINE}▄▀${NC}"
+        echo -e "      ${OUTLINE}▀▄${NC}      ${OUTLINE}▄▀${NC}                            ${OUTLINE}▀▄${NC}     ${OUTLINE}▄▀${NC}"
+        echo -e "        ${OUTLINE}▀▄▄▄▄▀${NC}                                ${OUTLINE}▀▄▄▄▄▀${NC}"
+
+        sleep 0.04
+        frame=$((frame+1))
+    done
+
+    echo
+    echo
+
+    printf "                  ${YELLOW}"
+
+    echo "Life is a game..." | awk '{
+        n=split($0,c,"");
+        for(i=1;i<=n;i++){
+            printf "%s",c[i];
+            system("sleep 0.010")
+        }
+    }'
+
+    echo -e "${NC}"
+
+    sleep 0.15
+    printf "\033[?25h"
+}
+
+games_exit_anim() {
+    local NC='\033[0m'
+    local PURPLE='\033[38;5;141m'
+    local GREEN='\033[38;5;46m'
+    local BLUE='\033[38;5;39m'
+    local YELLOW='\033[38;5;226m'
+    local RED='\033[38;5;196m'
+    local WHITE='\033[97m'
+    local CYAN='\033[38;5;51m'
+
+    hard_clear
+    printf "\033[?25l"
+
+    # FÁZIS 1: Az érintetlen kontroller utolsó pillanata
+    printf "\033[H\n\n"
+    echo -e "                  ${PURPLE}▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄${NC}"
+    echo -e "             ${PURPLE}▄▄▀▀▀                        ▀▀▀▄▄${NC}"
+    echo -e "          ${PURPLE}▄▀▀${NC}     ${GREEN}▲${NC}         ${WHITE}▰  ▰${NC}         ${YELLOW}●${NC}     ${PURPLE}▀▀▄${NC}"
+    echo -e "        ${PURPLE}▄▀${NC}       ${GREEN}◀ ▶${NC}                      ${RED}●${NC}   ${BLUE}●${NC}   ${PURPLE}▀▄${NC}"
+    echo -e "      ${PURPLE}▄▀${NC} ${GREEN}▼${NC}                    ${GREEN}●${NC}                   ${PURPLE}▀▄${NC}"
+    echo -e "     ${PURPLE}█${NC}              ${CYAN}◉${NC}                  ${CYAN}◉${NC}              ${PURPLE}█${NC}"
+    echo -e "      ${PURPLE}▀▄${NC}          ${PURPLE}▄▀▀${NC}                      ${PURPLE}▀▀▄${NC}          ${PURPLE}▄▀${NC}"
+    echo -e "        ${PURPLE}▀▄${NC}      ${PURPLE}▄▀${NC}                            ${PURPLE}▀▄${NC}      ${PURPLE}▄▀${NC}"
+    echo -e "          ${PURPLE}▀▄▄▄▄▀${NC}                                ${PURPLE}▀▄▄▄▄▀${NC}"
+
+    sleep 0.03
+
+    # FÁZIS 2: Pixel-szerű robbanás és táguló kitörés (Eruption)
+    hard_clear
+    printf "\033[H\n\n"
+    echo -e "                  ${RED}░░▒▒▓▓  * ▄▄▄▄  * ▓▓▒▒░░${NC}"
+    echo -e "             ${PURPLE}░▒▀${NC}         * ░░  ▒▒  * ${PURPLE}▀▒░${NC}"
+    echo -e "          ${RED}*${NC}       ${GREEN}▲${NC}         ${WHITE}▰  ▰${NC}         ${YELLOW}●${NC}       ${RED}*${NC}"
+    echo -e "        ▄▀       ${RED}░ ░${NC}                      ${RED}░ ░${NC}       ▀▄"
+    echo -e "      ░▀         ${GREEN}▼${NC}                            ${GREEN}●${NC}         ▀░"
+    echo -e "     ▓              ${CYAN}*${NC}                  ${CYAN}*${NC}              ▓"
+    echo -e "      ▀░          ${PURPLE}░▀▀${NC}                      ${PURPLE}▀▀░${NC}          ░▀"
+    echo -e "        ▀░      ${PURPLE}░▀${NC}                            ${PURPLE}▀░${NC}      ░▀"
+    echo -e "          ${RED}░▒▓▓░${NC}                                  ${RED}░▓▓▒░${NC}"
+
+    sleep 0.03
+
+    # FÁZIS 3: Gravitációs zuhanás (A felső rész kiürül, a darabok hullanak)
+    hard_clear
+    printf "\033[H\n\n"
+    echo -e "\n\n"
+    echo -e "                 ${RED}* .   ▒   ░   .   *${NC}"
+    echo -e "          ${PURPLE}░▄▀${NC}             ${WHITE}▰${NC}               ${PURPLE}▀▄░${NC}"
+    echo -e "        ${RED}.  *${NC}      ${GREEN}◀${NC}  ${GREEN}▶${NC}                  ${RED}●${NC}     ${RED}* .${NC}"
+    echo -e "     ${PURPLE}░█${NC}             ${CYAN}◉${NC}                  ${CYAN}◉${NC}             ${PURPLE}█░${NC}"
+    echo -e "      ${RED}*${NC}   ${PURPLE}▀▄${NC}                                  ${PURPLE}▄▀${NC}   ${RED}*${NC}"
+    echo -e "          ${PURPLE}▀▄▄${NC}   ${RED}.  * ▒  ░  ▒  * .${NC}   ${PURPLE}▄▄▀${NC}"
+    echo -e "             ${PURPLE}▀▀▀▀${NC}                      ${PURPLE}▀▀▀▀${NC}"
+
+    sleep 0.03
+
+    # FÁZIS 4: Teljes összeomlás (A darabok széthullva a padlón landolnak)
+    hard_clear
+    printf "\033[H\n\n"
+    echo -e "\n\n\n\n\n\n"
+    echo -e "        ${RED}.   * .        ░▒▓▒░        .      * .${NC}"
+    echo -e "   ${PURPLE}▄▄▀▀▄▄${NC}   ${GREEN}▲ ◀ ▼ ▶${NC}   ${WHITE}▰ ▰${NC}   ${CYAN}◉ ◉${NC}   ${YELLOW}●${NC}${RED}●${NC}${BLUE}●${NC}${GREEN}●${NC}   ${PURPLE}▄▄▀▀▄▄${NC}"
+
+    sleep 0.03
+
+    hard_clear
+    echo -e "\n\n\n"
+
+    printf "                 ${CYAN}"
+
+    echo "Earn your zenith" | awk '{
+        n=split($0,c,"");
+        for(i=1;i<=n;i++){
+            printf "%s",c[i];
+            system("sleep 0.012")
+        }
+    }'
+
+    echo -e "${NC}\n"
+
+    sleep 0.15
+    printf "\033[?25h"
+}
+
+games_menu() {
+    printf " ${PURPLE}%s)${NC}  %-21s\n" "$1" "ZENITH GAMES"
+}
+
+games_run() {
+    games_boot_anim
+
+    # SZÍNEK DEFINIÁLÁSA (Hogy a menüben is működjenek)
+    local NC='\033[0m'
+    local PURPLE='\033[38;5;141m'
+    local GREEN='\033[38;5;46m'
+    local BLUE='\033[38;5;39m'
+    local YELLOW='\033[38;5;226m'
+    local RED='\033[38;5;196m'
+    local WHITE='\033[97m'
+    local CYAN='\033[38;5;51m'
+    local ORANGE='\033[38;5;202m' # Ez teljesen hiányzott!
+
+    local BIRD_HS_FILE="/data/adb/zenith/games/zenith_bird_hs.txt"
+    local DINO_HS_FILE="/data/adb/zenith/games/zenith_dino_hs.txt"
+    local PONG_HS_FILE="/data/adb/zenith/games/zenith_pong_hs.txt"
+    local SPACE_HS_FILE="/data/adb/zenith/games/zenith_space_hs.txt"
+    local JUMP_HS_FILE="/data/adb/zenith/games/zenith_jump_hs.txt" # ÚJ: Jump mentés helye
+
+    while true; do
+        local bird_hs=$( [ -f "$BIRD_HS_FILE" ] && cat "$BIRD_HS_FILE" || echo 0 )
+        local dino_hs=$( [ -f "$DINO_HS_FILE" ] && cat "$DINO_HS_FILE" || echo 0 )
+
+        # JAVÍTVA: Csak a HIGHSCORE= utáni számot olvassa be, a labda/ütő beállításokat átugorja
+        local pong_hs=$( [ -f "$PONG_HS_FILE" ] && sed -n 's/^HIGHSCORE=//p' "$PONG_HS_FILE" || echo 0 )
+
+        local space_hs=$( [ -f "$SPACE_HS_FILE" ] && cat "$SPACE_HS_FILE" || echo 0 )
+        local jump_hs=$( [ -f "$JUMP_HS_FILE" ] && cat "$JUMP_HS_FILE" || echo 0 ) # ÚJ: Pontszám beolvasása
+
+        hard_clear
+        draw_header "${PURPLE}" "ZENITH GAMES 🎮"
+
+        echo
+        printf " ${YELLOW}1)${NC} %-20s ${YELLOW}[BEST: %s]${NC}\n" \
+            "ZENITH BIRD" "$bird_hs"
+
+        printf " ${PURPLE}2)${NC} %-20s ${YELLOW}[BEST: %s]${NC}\n" \
+            "ZENITH DINO" "$dino_hs"
+
+        printf " ${ORANGE}3)${NC} %-20s ${YELLOW}[BEST: %s]${NC}\n" \
+            "ZENITH PONG" "$pong_hs"
+
+        printf " ${CYAN}4)${NC} %-20s ${YELLOW}[BEST: %s]${NC}\n" \
+            "ZENITH SPACE" "$space_hs"
+
+        printf " ${GREEN}5)${NC} %-20s ${YELLOW}[BEST: %s]${NC}\n" \
+            "ZENITH JUMP" "$jump_hs"
+
+        echo
+        echo -e " ${YELLOW}b)${NC} Back"
+        echo
+
+        printf " ${WHITE}Select:${NC} "
+
+        local g_choice=""
+        read g_choice
+
+        case "$g_choice" in
+            1) zenith_bird_run ;;
+            2) zenith_dino_run ;;
+            3) zenith_pong_run ;;
+            4) zenith_space_run ;;
+            5) zenith_jump_run ;;
+            b|B)
+                games_exit_anim
+                break
+                ;;
+            *)
+                echo -e " ${RED}Invalid option.${NC}"
+                sleep 1
+                ;;
+        esac
+    done
+
+    hard_clear
+}
+
+# ==============================================================================
+#  [ MODULE: ZENITH BIRD - INFINITE HORIZON ]
+# ==============================================================================
+
+zenith_bird_menu() {
+    local HS_FILE="/data/adb/zenith/games/zenith_bird_hs.txt"
+    local hs=$( [ -f "$HS_FILE" ] && cat "$HS_FILE" || echo 0 )
+
+    printf " ${LIGHT_GREEN}${1})${NC}  %-21s ${CYAN}[BEST: %s]${NC}\n" \
+        "ZENITH BIRD" "$hs"
+}
+
+zenith_bird_run() {
+    local HS_FILE="/data/adb/zenith/games/zenith_bird_hs.txt"
+
+while true; do
+        local score=0
+        local highscore=$( [ -f "$HS_FILE" ] && cat "$HS_FILE" || echo 0 )
+
+        local HEIGHT=19
+        local WIDTH=58
+        local BASE_DELAY=0.04
+        local PIPE_SPEED=2
+        local GRAVITY=1
+        local FLAP=-3
+        local gap_size=6
+        local BIRD_X=10
+
+        local BIRD_IMG="${YELLOW}╣█╠${NC}"
+        local WALL_TEX="${LIGHT_GREEN}▓▒▒▓${NC}"
+        local BIRD_W=3
+        local WALL_W=4
+        local BG='\033[48;5;55m'        
+        local BORDER_COLOR="${ORANGE}"
+
+        local TOP_BAR=$(printf '═%.0s' $(seq 1 $WIDTH))
+        local BTM_BAR=$(printf '═%.0s' $(seq 1 $WIDTH))
+        local EMPTY_LINE=$(printf ' %.0s' $(seq 1 $WIDTH))
+
+        local bird_y=$((HEIGHT / 2))
+        local velocity=0
+        local pipe_x=$WIDTH
+        local gap_y=4
+        local alive=1
+
+        local SAVED_STTY=$(stty -g)
+        
+        cleanup_game() {
+            stty echo icanon
+            printf "\033[?25h\033[?7h\033[0m"
+        }
+        trap cleanup_game EXIT INT TERM
+        
+        stty -echo -icanon time 0 min 0
+        printf "\033[?25l\033[?7l\033[2J"
+
+        local START_FRAME="\033[H${BORDER_COLOR}${BG}╔${TOP_BAR}╗${NC}\r\n"
+        local row=1
+        while [ $row -le $HEIGHT ]; do
+            local line="${EMPTY_LINE}"
+            if [ $row -eq $bird_y ]; then
+                local text="PRESS ANY KEY TO START"
+                local text_len=${#text}
+                local start_pos=$(( (WIDTH - text_len) / 2 ))
+                line="${line:0:start_pos}${WHITE}${text}${BG}${line:$((start_pos + text_len))}"
+                local b_pos=$((BIRD_X - 1))
+                line="${line:0:b_pos}${BIRD_IMG}${BG}${line:$((b_pos + BIRD_W))}"
+            fi
+            START_FRAME+="${BORDER_COLOR}${BG}║${BG}${line}${BORDER_COLOR}${BG}║${NC}\r\n"
+            row=$((row + 1))
+        done
+        START_FRAME+="${BORDER_COLOR}${BG}╚${BTM_BAR}╝${NC}\r\n"
+        printf "%b" "$START_FRAME"
+
+        read -rsn1 _
+        velocity=$FLAP
+
+        while [ $alive -eq 1 ]; do
+            local key=""
+            read -rsn1 -t 0.001 key
+            [ -n "$key" ] && [[ "$key" != "q" ]] && velocity=$FLAP
+            [[ "$key" == "q" ]] && break
+
+            velocity=$((velocity + GRAVITY))
+            [ $velocity -gt 1 ] && velocity=1
+            bird_y=$((bird_y + velocity))
+
+            # Jetpack animation (FIXED)
+    if [ $velocity -lt 0 ]; then
+        # Ugrás / thrust
+        BIRD_IMG="${YELLOW}╣${RED}▼${YELLOW}╠${NC}"
+    elif [ $velocity -gt 0 ]; then
+        # Zuhanás
+        BIRD_IMG="${YELLOW}╣█╠${NC}"
+    else
+        # Lebegés
+        BIRD_IMG="${YELLOW}╣▓╠${NC}"
+    fi
+
+            local current_speed=$((PIPE_SPEED + (score / 10)))
+            [ $current_speed -gt 6 ] && current_speed=6
+
+            pipe_x=$((pipe_x - current_speed))
+
+            if [ $pipe_x -lt 1 ]; then
+                pipe_x=$WIDTH
+                gap_y=$(( RANDOM % (HEIGHT - gap_size - 2) + 2 ))
+                score=$((score + 1))
+            fi
+
+            if [ $bird_y -lt 1 ]; then bird_y=1; alive=0; fi
+            if [ $bird_y -gt $HEIGHT ]; then bird_y=$HEIGHT; alive=0; fi
+
+            if [ $alive -eq 1 ]; then
+                if [ $((BIRD_X + BIRD_W - 1)) -ge $pipe_x ] && [ $BIRD_X -le $((pipe_x + WALL_W - 1)) ]; then
+                    if [ $bird_y -lt $gap_y ] || [ $bird_y -ge $((gap_y + gap_size)) ]; then
+                        alive=0
+                    fi
+                fi
+            fi
+
+            if [ $score -lt 20 ]; then
+                WALL_TEX="${LIGHT_GREEN}▓▒▒▓${NC}"
+                BG='\033[48;5;55m'
+            elif [ $score -lt 40 ]; then
+                WALL_TEX="${CYAN}▓▒▒▓${NC}"
+                BG='\033[48;5;17m'
+            else
+                WALL_TEX="${RED}▓▒▒▓${NC}"
+                BG='\033[48;5;52m'
+            fi
+
+            local FRAME="\033[H"
+            FRAME+="${BORDER_COLOR}${BG}╔${TOP_BAR}╗${NC}\r\n"
+
+            local y=1
+            while [ $y -le $HEIGHT ]; do
+                local raw_line="${EMPTY_LINE}"
+
+                if [ $pipe_x -ge 1 ] && [ $pipe_x -le $WIDTH ]; then
+                    if [ $y -lt $gap_y ] || [ $y -ge $((gap_y + gap_size)) ]; then
+                        local p_s=$((pipe_x - 1))
+                        raw_line="${raw_line:0:p_s}WWWW${raw_line:$((p_s + WALL_W))}"
+                    fi
+                fi
+
+                if [ $y -eq $bird_y ]; then
+                    local b_s=$((BIRD_X - 1))
+                    raw_line="${raw_line:0:b_s}BBB${raw_line:$((b_s + BIRD_W))}"
+                fi
+
+                if [ $alive -eq 0 ] && [ $y -eq $((HEIGHT / 2)) ]; then
+                    local go="GAME OVER"
+                    local go_len=${#go}
+                    local go_pos=$(( (WIDTH - go_len) / 2 ))
+                    raw_line="${raw_line:0:go_pos}${WHITE}${go}${BG}${raw_line:$((go_pos + go_len))}"
+                fi
+
+                local colored_line="${raw_line//WWWW/${WALL_TEX}${BG}}"
+                colored_line="${colored_line//BBB/${BIRD_IMG}${BG}}"
+
+                FRAME+="${BORDER_COLOR}${BG}║${BG}${colored_line}${BORDER_COLOR}${BG}║${NC}\r\n"
+                y=$((y + 1))
+            done
+
+            FRAME+="${BORDER_COLOR}${BG}╚${BTM_BAR}╝${NC}\r\n"
+            FRAME+="${WHITE} SCORE: ${CYAN}${score}${NC}   ${WHITE}BEST: ${YELLOW}${highscore}${NC} "
+
+            printf "%b" "$FRAME"
+            
+            if [ $alive -eq 0 ]; then
+                sleep 0.8
+                while read -rsn1 -t 0.01; do :; done
+                break
+            fi
+
+            local current_delay=$(awk "BEGIN {
+                d=$BASE_DELAY - ($score*0.0005);
+                if (d < 0.02) d=0.02;
+                print d
+            }")
+
+            sleep "$current_delay"
+        done
+
+        [ $score -gt $highscore ] && echo "$score" > "$HS_FILE"
+        cleanup_game
+
+        echo -e "\n ${WHITE}RETRY? (Any key) / EXIT (Enter)${NC}"
+        local choice=""
+        read -rsn1 choice
+        [ "$choice" = "" ] && break
+    done
+    cleanup_game
+    trap - EXIT INT TERM
+}
+
+# ==============================================================================
+#  ZENITH DINO - INFINITE DESERT
+# ==============================================================================
+
+zenith_dino_menu() {
+    local HS_FILE="/data/adb/zenith/games/zenith_dino_hs.txt"
+    local hs=$( [ -f "$HS_FILE" ] && cat "$HS_FILE" || echo 0 )
+
+    printf " ${LIGHT_GREEN}${1})${NC}  %-21s ${CYAN}[BEST: %s]${NC}\n" \
+        "ZENITH DINO" "$hs"
+}
+
+zenith_dino_run() {
+    while true; do
+        local HS_FILE="/data/adb/zenith/games/zenith_dino_hs.txt"
+        local score=0
+        local highscore=$( [ -f "$HS_FILE" ] && cat "$HS_FILE" || echo 0 )
+
+        local SAVED_STTY=$(stty -g)
+
+        cleanup_dino() {
+            stty echo icanon
+            printf "\033[?25h\033[?7h\033[0m"
+        }
+
+        trap cleanup_dino EXIT INT TERM
+
+        local WIDTH=58
+        local HEIGHT=19
+        local FRAME_DELAY=0.035
+        local GRAVITY=1
+        local JUMP=-4
+        local MAX_FALL=2
+        local GROUND_Y=$((HEIGHT - 2))
+        local DINO_X=8
+        local DINO_W=5
+        local CACTUS_W=3
+        local GAME_SPEED=2
+
+        local CLOUD1_X=4 CLOUD1_Y=1
+        local CLOUD3_X=27 CLOUD3_Y=5
+        local CLOUD2_X=50 CLOUD2_Y=3
+
+        local CLOUD_TOP=" ▄▄▄ "
+        local CLOUD_BOT="█████"
+        local CLOUD_COLOR="\033[38;5;250m"
+        local BG='\033[48;5;255m'
+        local BORDER_COLOR="\033[38;5;240m"
+        local NC='\033[0m'
+
+        local DINO_HEAD="\033[38;5;141m▓▀█▀▓${BG}"
+        local DINO_BODY="\033[38;5;135m▓███▓${BG}"
+        local CACTUS_IMG="\033[32m█▄█${BG}"
+        local GROUND_IMG="\033[38;5;244m━${BG}"
+        local SCORE_STYLE="\033[97;40m"
+
+        local TOP_BAR=$(printf '═%.0s' $(seq 1 $WIDTH))
+        local BTM_BAR=$TOP_BAR
+        local EMPTY_LINE=$(printf ' %.0s' $(seq 1 $WIDTH))
+        local GROUND_LINE=$(printf '_%.0s' $(seq 1 $WIDTH))
+
+        declare -a STATIC_LINES
+        local sy=1
+        while [ $sy -le $HEIGHT ]; do
+            local line="$EMPTY_LINE"
+            [ $sy -eq $((GROUND_Y + 1)) ] && line="$GROUND_LINE"
+
+            if [ $sy -eq $CLOUD1_Y ]; then line="${line:0:$((CLOUD1_X-1))}${CLOUD_COLOR}${CLOUD_TOP}${BG}${line:$((CLOUD1_X+4))}"; fi
+            if [ $sy -eq $((CLOUD1_Y+1)) ]; then line="${line:0:$((CLOUD1_X-1))}${CLOUD_COLOR}${CLOUD_BOT}${BG}${line:$((CLOUD1_X+4))}"; fi
+            if [ $sy -eq $CLOUD2_Y ]; then line="${line:0:$((CLOUD2_X-1))}${CLOUD_COLOR}${CLOUD_TOP}${BG}${line:$((CLOUD2_X+4))}"; fi
+            if [ $sy -eq $((CLOUD2_Y+1)) ]; then line="${line:0:$((CLOUD2_X-1))}${CLOUD_COLOR}${CLOUD_BOT}${BG}${line:$((CLOUD2_X+4))}"; fi
+            if [ $sy -eq $CLOUD3_Y ]; then line="${line:0:$((CLOUD3_X-1))}${CLOUD_COLOR}${CLOUD_TOP}${BG}${line:$((CLOUD3_X+4))}"; fi
+            if [ $sy -eq $((CLOUD3_Y+1)) ]; then line="${line:0:$((CLOUD3_X-1))}${CLOUD_COLOR}${CLOUD_BOT}${BG}${line:$((CLOUD3_X+4))}"; fi
+
+            STATIC_LINES[$sy]="$line"
+            sy=$((sy + 1))
+        done
+
+        local dino_y=$GROUND_Y
+        local velocity=0
+        local cactus_x=$WIDTH
+        local cactus_h=3
+        local alive=1
+
+        stty -echo -icanon time 0 min 0
+        printf "\033[?25l\033[?7l\033[2J"
+
+        local START_FRAME="\033[H${BORDER_COLOR}${BG}╔${TOP_BAR}╗${NC}\r\n"
+        sy=1
+        while [ $sy -le $HEIGHT ]; do
+            local line="${EMPTY_LINE}"
+            if [ $sy -eq $((HEIGHT / 2)) ]; then
+                local text=" PRESS ANY KEY TO START "
+                local start_pos=$(( (WIDTH - 24) / 2 ))
+                line="${line:0:start_pos}\033[30m${text}${BG}${line:$((start_pos + 24))}"
+            fi
+            START_FRAME+="${BORDER_COLOR}${BG}║${BG}${line}${BORDER_COLOR}${BG}║${NC}\r\n"
+            sy=$((sy + 1))
+        done
+        START_FRAME+="${BORDER_COLOR}${BG}╚${BTM_BAR}╝${NC}\r\n"
+        
+        printf "%b" "$START_FRAME"
+        read -rsn1 start_key
+        velocity=$JUMP
+
+        while [ $alive -eq 1 ]; do
+            local key=""
+            local k=""
+            # Kiürítjük a puffert, így az összes korábbi gombnyomást eldobjuk, 
+            # és csak a legfrissebbet mentjük el a 'key' változóba
+            while read -rsn1 -t 0 k; do
+                key="$k"
+            done
+
+            if [ -n "$key" ]; then
+                [ "$key" = "q" ] && { alive=0; break; }
+                [ $dino_y -ge $GROUND_Y ] && velocity=$JUMP
+            fi
+
+            velocity=$((velocity + GRAVITY))
+            [ $velocity -gt $MAX_FALL ] && velocity=$MAX_FALL
+            dino_y=$((dino_y + velocity))
+            [ $dino_y -gt $GROUND_Y ] && dino_y=$GROUND_Y
+            cactus_x=$((cactus_x - GAME_SPEED))
+
+            if [ $cactus_x -lt -3 ]; then
+                cactus_x=$WIDTH
+                cactus_h=$(( (RANDOM % 2) + 2 ))
+                score=$((score + 1))
+                [ $((score % 5)) -eq 0 ] && [ $GAME_SPEED -lt 5 ] && GAME_SPEED=$((GAME_SPEED + 1))
+            fi
+
+            if [ $((DINO_X + 4)) -ge $cactus_x ] && [ $DINO_X -le $((cactus_x + 2)) ]; then
+                [ $dino_y -ge $((GROUND_Y - cactus_h + 1)) ] && alive=0
+            fi
+
+            local FRAME="\033[H${BORDER_COLOR}${BG}╔${TOP_BAR}╗${NC}\r\n"
+            local y=1
+            while [ $y -le $HEIGHT ]; do
+                local raw_line="${STATIC_LINES[$y]}"
+
+                if [ $y -ge $((GROUND_Y - cactus_h + 1)) ] && [ $y -le $GROUND_Y ]; then
+                    if [ $cactus_x -ge 1 ] && [ $cactus_x -le $((WIDTH - 3)) ]; then
+                        raw_line="${raw_line:0:$((cactus_x-1))}CCC${raw_line:$((cactus_x+2))}"
+                    fi
+                fi
+
+                if [ $y -eq $((dino_y - 1)) ]; then
+                    raw_line="${raw_line:0:$((DINO_X-1))}HHHHH${raw_line:$((DINO_X+4))}"
+                elif [ $y -eq $dino_y ]; then
+                    raw_line="${raw_line:0:$((DINO_X-1))}DDDDD${raw_line:$((DINO_X+4))}"
+                fi
+
+                if [ $alive -eq 0 ] && [ $y -eq $((HEIGHT / 2)) ]; then
+                    local go=" GAME OVER "
+                    local go_len=${#go}
+                    local go_pos=$(( (WIDTH - go_len) / 2 ))
+
+                    raw_line="${raw_line:0:go_pos}\033[30m${go}${BG}${raw_line:$((go_pos + go_len))}"
+                fi
+
+                raw_line="${raw_line//CCC/${CACTUS_IMG}}"
+                raw_line="${raw_line//HHHHH/${DINO_HEAD}}"
+                raw_line="${raw_line//DDDDD/${DINO_BODY}}"
+                raw_line="${raw_line//_/${GROUND_IMG}}"
+
+                FRAME+="${BORDER_COLOR}${BG}║${BG}${raw_line}${BORDER_COLOR}${BG}║${NC}\r\n"
+                y=$((y + 1))
+            done
+
+            FRAME="${FRAME}${BORDER_COLOR}${BG}╚${BTM_BAR}╝${NC}\r\n"
+            FRAME="${FRAME}${SCORE_STYLE} HI: ${highscore} | SCORE: ${score} | SPEED: ${GAME_SPEED} ${NC}"
+
+            printf "%b" "$FRAME"
+
+            if [ $alive -eq 0 ]; then
+                sleep 0.8
+                while read -rsn1 -t 0.01; do :; done
+                break
+            fi
+
+            local d_ms=$(( 35 - (score / 4) ))
+            [ $d_ms -lt 25 ] && d_ms=25
+            sleep 0.0$d_ms
+        done
+
+        [ $score -gt $highscore ] && echo "$score" > "$HS_FILE"
+        cleanup_dino
+
+        echo -e "\n ${WHITE}RETRY? (Any key) / EXIT (Enter)${NC}"
+
+        choice=""
+        read -rsn1 choice
+        [ "$choice" = "" ] && break
+    done
+
+    cleanup_dino
+    trap - EXIT INT TERM
+}
+
+# ==============================================================================
+#  ZENITH PONG - NEON REFLEX ( 🟠 🔵 🟢 🟣 🟡 🔴 ) - REALISTIC PHYSICS EDITION
+# ==============================================================================
+
+zenith_pong_run() {
+    local HS_FILE="/data/adb/zenith/games/zenith_pong_hs.txt"
+
+    local highscore=0
+    local SELECTED_EMOJI="🟠"
+    local SELECTED_PAD_COLOR="\033[38;5;81m"
+
+    if [ -f "$HS_FILE" ]; then
+        while IFS='=' read -r key val; do
+            case "$key" in
+                HIGHSCORE) highscore="$val" ;;
+                BALL)      SELECTED_EMOJI="$val" ;;
+                PAD_COLOR) SELECTED_PAD_COLOR="$val" ;;
+            esac
+        done < "$HS_FILE"
+    fi
+
+    while true; do
+        local score=0
+        local SAVED_STTY=$(stty -g)
+
+        cleanup_pong() {
+            if [ -n "$SAVED_STTY" ]; then
+                stty "$SAVED_STTY" 2>/dev/null || stty echo icanon
+            else
+                stty echo icanon
+            fi
+            printf "\033[?25h\033[?7h\033[0m"
+        }
+        trap cleanup_pong EXIT INT TERM
+
+        local BG='\033[48;2;26;2;51m'
+        local BORDER_COLOR="\033[38;5;141m"
+        local BORDER_GLOW="\033[38;5;177m"
+        local HUD_STYLE="\033[38;5;225m"
+        local LIGHT_TXT="\033[38;5;225m"
+        local WHITE="\033[37m"
+        local NC='\033[0m'
+
+        local WIDTH=58
+        local HEIGHT=19
+        local LOOP_TICK=0.010
+        local SPEED_START=75
+        local SPEED_ACCEL=10
+        local LEVEL_SCORE_GAP=10
+        local MAX_LEVEL=10
+        local WALL_LIFETIME=9
+
+        local BLK_1_COLOR="\033[38;5;201m"; local BLK_1_SCORE=2
+        local BLK_2_COLOR="\033[38;5;39m";  local BLK_2_LVL_DROP=2
+        local BLK_3_COLOR="\033[38;5;226m"; local BLK_3_DUR=7
+        local BLK_4_COLOR="\033[38;5;46m";  local BLK_4_DUR=10; local BLK_4_ADD=4
+        local BLK_5_COLOR="\033[38;5;196m"; local BLK_5_DUR=5;  local BLK_5_SUB=5
+
+        local BASE_PADDLE_W=16
+        local PADDLE_W=$BASE_PADDLE_W
+        local PADDLE_Y=$HEIGHT
+        local PADDLE_X=$((WIDTH / 2 - PADDLE_W / 2))
+        local PADDLE_JUMP=6
+
+        local SPEED_OFFSET=0
+        local EFF_YELLOW_END=0
+        local EFF_GREEN_END=0
+        local EFF_RED_END=0
+
+        local BALL_TIMER=0
+        local BALL_X=$((WIDTH / 2))
+        local BALL_Y=$((HEIGHT / 2))
+
+        local WALL_X=0
+        local WALL_Y=-1
+        local WALL_TYPE=1
+        local WALL_COLOR="\033[38;5;201m"
+        local WALL_STR="▓▓▓▓"
+        local WALL_DIE_TIME=0
+
+        local DX
+        [ $((RANDOM % 2)) -eq 0 ] && DX=-1 || DX=1
+
+        local DY=-1
+        local alive=1
+
+        local TOP_BAR=$(printf '═%.0s' $(seq 1 $WIDTH))
+        local EMPTY_LINE=$(printf ' %.0s' $(seq 1 $WIDTH))
+        local SHIELD_RAW=$(printf '▒%.0s' $(seq 1 $WIDTH))
+
+        local BODY_LINE="${BORDER_COLOR}${BG}║${EMPTY_LINE}${BORDER_COLOR}${BG}║${NC}\r\n"
+
+        stty -echo -icanon time 0 min 0
+        printf "\033[?25l\033[?7l\033[2J"
+
+        while true; do
+            printf "\033[2J\033[H"
+
+            local BALL_CHAR="${WHITE}${SELECTED_EMOJI}${BG}"
+
+            local PADDLE_COLOR="$SELECTED_PAD_COLOR"
+            local P_UNIT="${PADDLE_COLOR}▓${NC}${BG}"
+
+            local PADDLE_STR=""
+            local pi=0
+            while [ $pi -lt $PADDLE_W ]; do
+                PADDLE_STR="${PADDLE_STR}${P_UNIT}"
+                pi=$((pi+1))
+            done
+
+            local START_FRAME="${BORDER_GLOW}${BG}╔${TOP_BAR}╗${NC}\r\n"
+
+            local sy=1
+            while [ $sy -le $HEIGHT ]; do
+                local line="$EMPTY_LINE"
+
+                if [ $sy -eq $((HEIGHT / 2)) ]; then
+                    local t="PRESSS ANY KEY TO START"
+                    local orig_len=22
+                    local start=$(( (WIDTH - orig_len) / 2 ))
+                    local end=$(( start + 23 ))
+                    line="${line:0:$start}${WHITE}${t}${BG}${line:$end}"
+                fi
+
+                if [ $sy -eq $((HEIGHT / 2 + 2)) ]; then
+                    local t="KEYS: MOVE (LEFT SIDE / RIGHT SIDE)"
+                    line="${line:0:$(( (WIDTH-${#t})/2 ))}${LIGHT_TXT}${t}${BG}${line:$(( (WIDTH+${#t})/2 ))}"
+                fi
+
+                if [ $sy -eq $BALL_Y ] && [ $sy -eq $PADDLE_Y ]; then
+                    if [ $BALL_X -lt $PADDLE_X ]; then
+                        local mid=$((PADDLE_X - BALL_X - 2))
+                        [ $mid -lt 0 ] && mid=0
+                        line="${EMPTY_LINE:0:$((BALL_X-1))}${BALL_CHAR}${EMPTY_LINE:0:$mid}${PADDLE_STR}${EMPTY_LINE:$((PADDLE_X + PADDLE_W - 1))}"
+                    else
+                        local mid=$((BALL_X - PADDLE_X - PADDLE_W))
+                        [ $mid -lt 0 ] && mid=0
+                        line="${EMPTY_LINE:0:$((PADDLE_X-1))}${PADDLE_STR}${EMPTY_LINE:0:$mid}${BALL_CHAR}${EMPTY_LINE:$((BALL_X+1))}"
+                    fi
+                elif [ $sy -eq $BALL_Y ]; then
+                    line="${line:0:$((BALL_X-1))}${BALL_CHAR}${line:$((BALL_X+1))}"
+                elif [ $sy -eq $PADDLE_Y ]; then
+                    line="${line:0:$((PADDLE_X-1))}${PADDLE_STR}${line:$((PADDLE_X + PADDLE_W - 1))}"
+                fi
+
+                START_FRAME+="${BORDER_COLOR}${BG}║${line}${BORDER_COLOR}${BG}║${NC}\r\n"
+                sy=$((sy+1))
+            done
+
+            START_FRAME+="${BORDER_GLOW}${BG}╚${TOP_BAR}╝${NC}\r\n"
+            START_FRAME+=" ${WHITE} Ball: ${NC}1:🟠 2:🔵 3:🟢 4:🟣 5:🟡 6:🔴 ${WHITE}| Paddle: ${NC}7-9"
+
+            printf "%b" "$START_FRAME"
+
+            local sk
+            read -rsn1 sk
+
+            case "$sk" in
+                1) SELECTED_EMOJI="🟠" ;;
+                2) SELECTED_EMOJI="🔵" ;;
+                3) SELECTED_EMOJI="🟢" ;;
+                4) SELECTED_EMOJI="🟣" ;;
+                5) SELECTED_EMOJI="🟡" ;;
+                6) SELECTED_EMOJI="🔴" ;;
+                7) SELECTED_PAD_COLOR="\033[38;5;81m" ;;
+                8) SELECTED_PAD_COLOR="\033[38;5;226m" ;;
+                9) SELECTED_PAD_COLOR="$BORDER_COLOR" ;;
+                *) break ;;
+            esac
+
+            mkdir -p "$(dirname "$HS_FILE")"
+cat <<EOF > "$HS_FILE"
+HIGHSCORE=$highscore
+BALL=$SELECTED_EMOJI
+PAD_COLOR=$SELECTED_PAD_COLOR
+EOF
+        done
+
+        local BALL_CHAR="${WHITE}${SELECTED_EMOJI}${BG}"
+
+        printf "\033[2J"
+
+        while [ $alive -eq 1 ]; do
+            local RAW_LEVEL=$(( score / LEVEL_SCORE_GAP + 1 ))
+            local LEVEL=$(( RAW_LEVEL + SPEED_OFFSET ))
+
+            [ $LEVEL -lt 1 ] && LEVEL=1
+            [ $LEVEL -gt $MAX_LEVEL ] && LEVEL=$MAX_LEVEL
+
+            local BALL_INC=$(( SPEED_START + (LEVEL - 1) * SPEED_ACCEL ))
+
+            local mod=0
+
+            [ $SECONDS -lt $EFF_GREEN_END ] && mod=$((mod + BLK_4_ADD))
+            [ $SECONDS -lt $EFF_RED_END ] && mod=$((mod - BLK_5_SUB))
+
+            PADDLE_W=$((BASE_PADDLE_W + mod))
+            [ $PADDLE_W -lt 4 ] && PADDLE_W=4
+
+            local mx=$((WIDTH - PADDLE_W + 1))
+
+            [ $PADDLE_X -gt $mx ] && PADDLE_X=$mx
+            [ $PADDLE_X -lt 1 ] && PADDLE_X=1
+
+            local PADDLE_COLOR="$SELECTED_PAD_COLOR"
+            local P_UNIT="${PADDLE_COLOR}▓${NC}${BG}"
+
+            local PADDLE_STR=""
+            local pj=0
+
+            while [ $pj -lt $PADDLE_W ]; do
+                PADDLE_STR="${PADDLE_STR}${P_UNIT}"
+                pj=$((pj+1))
+            done
+
+            if [ $WALL_Y -ne -1 ] && [ $WALL_LIFETIME -gt 0 ] && [ $SECONDS -ge $WALL_DIE_TIME ]; then
+                WALL_Y=-1
+            fi
+
+            local key=""
+            read -rsn1 -t $LOOP_TICK key
+
+            case "$key" in
+                [a-gA-G1-5qQwWeErRtTsSdDfFgGzZxXcCvVbB])
+                    PADDLE_X=$((PADDLE_X - PADDLE_JUMP))
+                    [ $PADDLE_X -lt 1 ] && PADDLE_X=1
+                    ;;
+                [h-lH-L6-90yYuUiIoOpPjJkKnNmM,.\;])
+                    PADDLE_X=$((PADDLE_X + PADDLE_JUMP))
+                    local mx=$((WIDTH - PADDLE_W + 1))
+                    [ $PADDLE_X -gt $mx ] && PADDLE_X=$mx
+                    ;;
+            esac
+
+            BALL_TIMER=$((BALL_TIMER + BALL_INC))
+
+            if [ $BALL_TIMER -ge 240 ]; then
+                BALL_TIMER=$((BALL_TIMER - 240))
+
+                BALL_X=$((BALL_X + DX))
+                BALL_Y=$((BALL_Y + DY))
+
+                if [ $WALL_Y -eq -1 ] && [ $((RANDOM % 150)) -eq 0 ]; then
+                    WALL_Y=$((RANDOM % 8 + 3))
+                    WALL_X=$((RANDOM % (WIDTH - 6) + 2))
+
+                    [ $WALL_LIFETIME -gt 0 ] && WALL_DIE_TIME=$((SECONDS + WALL_LIFETIME))
+
+                    if [ $LEVEL -ge 2 ]; then
+                        WALL_TYPE=$((RANDOM % 5 + 1))
+                    else
+                        case $((RANDOM % 4)) in
+                            0) WALL_TYPE=1 ;;
+                            1) WALL_TYPE=3 ;;
+                            2) WALL_TYPE=4 ;;
+                            3) WALL_TYPE=5 ;;
+                        esac
+                    fi
+
+                    case $WALL_TYPE in
+                        1) WALL_COLOR=$BLK_1_COLOR ;;
+                        2) WALL_COLOR=$BLK_2_COLOR ;;
+                        3) WALL_COLOR=$BLK_3_COLOR ;;
+                        4) WALL_COLOR=$BLK_4_COLOR ;;
+                        5) WALL_COLOR=$BLK_5_COLOR ;;
+                    esac
+                fi
+
+                if [ $BALL_X -le 1 ]; then
+                    DX=$(( -DX ))
+                    BALL_X=1
+                fi
+
+                if [ $BALL_X -ge $((WIDTH - 1)) ]; then
+                    DX=$(( -DX ))
+                    BALL_X=$((WIDTH - 1))
+                fi
+
+                if [ $BALL_Y -le 1 ]; then
+                    DY=1
+                    BALL_Y=1
+                fi
+
+                if [ $WALL_Y -ne -1 ] && [ $BALL_Y -eq $WALL_Y ] && [ $((BALL_X + 1)) -ge $WALL_X ] && [ $BALL_X -le $((WALL_X + 3)) ]; then
+                    DY=$(( -DY ))
+                    WALL_Y=-1
+
+                    case $WALL_TYPE in
+                        1) score=$((score + BLK_1_SCORE)) ;;
+                        2) SPEED_OFFSET=$((SPEED_OFFSET - BLK_2_LVL_DROP)) ;;
+                        3) EFF_YELLOW_END=$((SECONDS + BLK_3_DUR)) ;;
+                        4) EFF_GREEN_END=$((SECONDS + BLK_4_DUR)) ;;
+                        5) EFF_RED_END=$((SECONDS + BLK_5_DUR)) ;;
+                    esac
+                fi
+
+                if [ $BALL_Y -eq $((PADDLE_Y - 1)) ]; then
+                    if [ $((BALL_X + 1)) -ge $PADDLE_X ] && [ $BALL_X -lt $((PADDLE_X + PADDLE_W)) ]; then
+                        local offset=$((BALL_X - PADDLE_X))
+                        local center=$((PADDLE_W / 2))
+
+                        # --------------------------------------------------
+                        # EDGE CURVE
+                        # --------------------------------------------------
+                        local curve=0
+
+                        if [ $offset -lt $((center - 5)) ]; then
+                            curve=-1
+                        elif [ $offset -gt $((center + 5)) ]; then
+                            curve=1
+                        fi
+
+                        # szélek extra erősek
+                        if [ $offset -le 1 ]; then
+                            curve=-2
+                        elif [ $offset -ge $((PADDLE_W - 2)) ]; then
+                            curve=2
+                        fi
+
+                        # --------------------------------------------------
+                        # PADDLE IMPULSE
+                        # --------------------------------------------------
+                        local impulse=0
+
+                        case "$key" in
+                            [a-gA-G1-5qQwWeErRtTsSdDfFgGzZxXcCvVbB])
+                                impulse=-1
+                                ;;
+                            [h-lH-L6-90yYuUiIoOpPjJkKnNmM,.\;])
+                                impulse=1
+                                ;;
+                        esac
+
+                        # --------------------------------------------------
+                        # MOMENTUM PHYSICS
+                        # --------------------------------------------------
+                        DX=$((DX + curve + impulse))
+
+                        # enyhe csillapítás
+                        if [ $DX -gt 1 ] && [ $((RANDOM % 4)) -eq 0 ]; then
+                            DX=$((DX - 1))
+                        elif [ $DX -lt -1 ] && [ $((RANDOM % 4)) -eq 0 ]; then
+                            DX=$((DX + 1))
+                        fi
+
+                        # clamp
+                        [ $DX -lt -3 ] && DX=-3
+                        [ $DX -gt 3 ] && DX=3
+
+                        # ha teljesen megállna vízszintesen
+                        [ $DX -eq 0 ] && {
+                            [ $((RANDOM % 2)) -eq 0 ] && DX=-1 || DX=1
+                        }
+
+                        DY=-1
+                        score=$((score + 1))
+
+                    elif [ $SECONDS -lt $EFF_YELLOW_END ]; then
+                        DY=-1
+                    fi
+                fi
+
+                if [ $BALL_Y -ge $HEIGHT ]; then
+                    BALL_Y=$HEIGHT
+                    alive=0
+                fi
+            fi
+
+            local FRAME="\033[H${BORDER_GLOW}${BG}╔${TOP_BAR}╗${NC}\r\n"
+
+            local is_go_row=0
+            [ $alive -eq 0 ] && is_go_row=$((HEIGHT / 2))
+
+            local y=1
+
+            while [ $y -le $HEIGHT ]; do
+                if [ $y -eq $is_go_row ]; then
+                    local go=" GAME OVER "
+                    local pos=$(( (WIDTH - 11) / 2 ))
+                    local line="${EMPTY_LINE:0:$pos}${WHITE}${go}${BG}${EMPTY_LINE:$((pos + 11))}"
+                    FRAME+="${BORDER_COLOR}${BG}║${line}${BORDER_COLOR}${BG}║${NC}\r\n"
+
+                elif [ $y -ne $BALL_Y ] && [ $y -ne $PADDLE_Y ] && [ $y -ne $WALL_Y ]; then
+                    FRAME+="$BODY_LINE"
+
+                else
+                    local line="$EMPTY_LINE"
+
+                    if [ $y -eq $WALL_Y ] && [ $y -eq $BALL_Y ]; then
+                        if [ $BALL_X -lt $WALL_X ]; then
+                            local mid=$((WALL_X - BALL_X - 2))
+                            [ $mid -lt 0 ] && mid=0
+                            line="${EMPTY_LINE:0:$((BALL_X-1))}${BALL_CHAR}${EMPTY_LINE:0:$mid}${WALL_COLOR}${WALL_STR}${BG}${EMPTY_LINE:$((WALL_X+3))}"
+                        elif [ $BALL_X -ge $((WALL_X + 4)) ]; then
+                            local mid=$((BALL_X - WALL_X - 4))
+                            [ $mid -lt 0 ] && mid=0
+                            line="${EMPTY_LINE:0:$((WALL_X-1))}${WALL_COLOR}${WALL_STR}${BG}${EMPTY_LINE:0:$mid}${BALL_CHAR}${EMPTY_LINE:$((BALL_X+1))}"
+                        else
+                            line="${EMPTY_LINE:0:$((WALL_X-1))}${WALL_COLOR}${WALL_STR}${BG}${EMPTY_LINE:$((WALL_X+3))}"
+                        fi
+
+                    elif [ $y -eq $BALL_Y ] && [ $y -eq $PADDLE_Y ]; then
+                        if [ $SECONDS -lt $EFF_YELLOW_END ]; then
+                            if [ $BALL_X -lt $PADDLE_X ]; then
+                                local mid=$((PADDLE_X - BALL_X - 2))
+                                [ $mid -lt 0 ] && mid=0
+                                line="${BLK_3_COLOR}${SHIELD_RAW:0:$((BALL_X-1))}${BALL_CHAR}${BLK_3_COLOR}${SHIELD_RAW:0:$mid}${PADDLE_STR}${BLK_3_COLOR}${SHIELD_RAW:$((PADDLE_X + PADDLE_W - 1))}${BG}"
+                            elif [ $BALL_X -ge $((PADDLE_X + PADDLE_W)) ]; then
+                                local mid=$((BALL_X - PADDLE_X - PADDLE_W))
+                                [ $mid -lt 0 ] && mid=0
+                                line="${BLK_3_COLOR}${SHIELD_RAW:0:$((PADDLE_X-1))}${PADDLE_STR}${BLK_3_COLOR}${SHIELD_RAW:0:$mid}${BALL_CHAR}${BLK_3_COLOR}${SHIELD_RAW:$((BALL_X+1))}${BG}"
+                            else
+                                line="${BLK_3_COLOR}${SHIELD_RAW:0:$((PADDLE_X-1))}${PADDLE_STR}${BLK_3_COLOR}${SHIELD_RAW:$((PADDLE_X + PADDLE_W - 1))}${BG}"
+                            fi
+                        else
+                            if [ $BALL_X -lt $PADDLE_X ]; then
+                                local mid=$((PADDLE_X - BALL_X - 2))
+                                [ $mid -lt 0 ] && mid=0
+                                line="${EMPTY_LINE:0:$((BALL_X-1))}${BALL_CHAR}${EMPTY_LINE:0:$mid}${PADDLE_STR}${EMPTY_LINE:$((PADDLE_X + PADDLE_W - 1))}"
+                            elif [ $BALL_X -ge $((PADDLE_X + PADDLE_W)) ]; then
+                                local mid=$((BALL_X - PADDLE_X - PADDLE_W))
+                                [ $mid -lt 0 ] && mid=0
+                                line="${EMPTY_LINE:0:$((PADDLE_X-1))}${PADDLE_STR}${EMPTY_LINE:0:$mid}${BALL_CHAR}${EMPTY_LINE:$((BALL_X+1))}"
+                            else
+                                line="${EMPTY_LINE:0:$((PADDLE_X-1))}${PADDLE_STR}${EMPTY_LINE:$((PADDLE_X + PADDLE_W - 1))}"
+                            fi
+                        fi
+
+                    elif [ $y -eq $WALL_Y ]; then
+                        line="${EMPTY_LINE:0:$((WALL_X-1))}${WALL_COLOR}${WALL_STR}${BG}${EMPTY_LINE:$((WALL_X+3))}"
+
+                    elif [ $y -eq $BALL_Y ]; then
+                        line="${EMPTY_LINE:0:$((BALL_X-1))}${BALL_CHAR}${EMPTY_LINE:$((BALL_X+1))}"
+
+                    elif [ $y -eq $PADDLE_Y ]; then
+                        if [ $SECONDS -lt $EFF_YELLOW_END ]; then
+                            line="${BLK_3_COLOR}${SHIELD_RAW:0:$((PADDLE_X-1))}${PADDLE_STR}${BLK_3_COLOR}${SHIELD_RAW:$((PADDLE_X + PADDLE_W - 1))}${BG}"
+                        else
+                            line="${EMPTY_LINE:0:$((PADDLE_X-1))}${PADDLE_STR}${EMPTY_LINE:$((PADDLE_X + PADDLE_W - 1))}"
+                        fi
+                    fi
+
+                    FRAME+="${BORDER_COLOR}${BG}║${line}${BORDER_COLOR}${BG}║${NC}\r\n"
+                fi
+                y=$((y+1))
+            done
+
+            FRAME+="${BORDER_GLOW}${BG}╚${TOP_BAR}╝${NC}\r\n"
+
+            local bar=""
+            local bi=1
+            while [ $bi -le $MAX_LEVEL ]; do
+                [ $bi -le $LEVEL ] && bar="${bar}█" || bar="${bar}░"
+                bi=$((bi+1))
+            done
+
+            local pw_hud=""
+
+            if [ $SECONDS -lt $EFF_YELLOW_END ]; then
+                local rem_time=$((EFF_YELLOW_END - SECONDS))
+                [ $rem_time -lt 0 ] && rem_time=0
+                pw_hud="${pw_hud}  ${BLK_3_COLOR}SHIELD:${rem_time}s${NC}"
+            fi
+
+            if [ $SECONDS -lt $EFF_GREEN_END ]; then
+                local rem_time=$((EFF_GREEN_END - SECONDS))
+                [ $rem_time -lt 0 ] && rem_time=0
+                pw_hud="${pw_hud}  ${BLK_4_COLOR}WIDE:${rem_time}s${NC}"
+            fi
+
+            if [ $SECONDS -lt $EFF_RED_END ]; then
+                local rem_time=$((EFF_RED_END - SECONDS))
+                [ $rem_time -lt 0 ] && rem_time=0
+                pw_hud="${pw_hud}  ${BLK_5_COLOR}NARROW:${rem_time}s${NC}"
+            fi
+
+            FRAME+=" ${HUD_STYLE}BEST:${highscore} | SCORE:${score} | LVL:${LEVEL}/${MAX_LEVEL} [${bar}] ${pw_hud}${NC}\033[K\r"
+
+            printf "%b" "$FRAME"
+
+            if [ $alive -eq 0 ]; then
+                sleep 0.8
+                while read -rsn1 -t 0.01; do :; done
+                break
+            fi
+        done
+
+        if [ $score -gt $highscore ]; then
+            highscore=$score
+            mkdir -p "$(dirname "$HS_FILE")"
+cat <<EOF > "$HS_FILE"
+HIGHSCORE=$highscore
+BALL=$SELECTED_EMOJI
+PAD_COLOR=$SELECTED_PAD_COLOR
+EOF
+        fi
+
+        cleanup_pong
+
+        echo -e "\n ${WHITE}RETRY? (Any key) / EXIT (Enter)${NC}"
+
+        local c
+        read -rsn1 c
+
+        [ "$c" = "" ] && break
+    done
+}
+
+# ==============================================================================
+#  [ MODUL: ZENITH IMPACT - NEON INVADERS ( 🚀 👾  ) ]
+# ==============================================================================
+
+space_invaders_menu() {
+    echo -e "${PURPLE} ${1})${NC}  SPACE INVADERS        ${LIGHT_GREEN}[READY]${NC}"
+}
+
+zenith_space_run() {
+    # ------------------------------------------------------------------
+    # COLORS
+    # ------------------------------------------------------------------
+    local BG_PURPLE='\033[48;2;14;1;28m'
+    local BORDER_COLOR="\033[38;5;141m"
+    local BORDER_GLOW="\033[38;5;177m"
+    local WHITE="\033[37m"
+    local PURPLE="\033[38;5;141m"
+    local YELLOW="\033[38;5;226m"
+    local LIGHT_GREEN="\033[38;5;46m"
+    local CYAN="\033[38;5;39m"
+    local RED="\033[38;5;196m"
+    local HUD_STYLE="\033[38;5;225m"
+    local NC='\033[0m'
+
+    # ------------------------------------------------------------------
+    # DIMENSIONS & CONFIG
+    # ------------------------------------------------------------------
+    local WIDTH=56
+    local HEIGHT=19
+
+    local TOP_BAR=$(printf '═%.0s' $(seq 1 $WIDTH))
+    local EMPTY_LINE=$(printf ' %.0s' $(seq 1 $WIDTH))
+
+    # ------------------------------------------------------------------
+    # TERMINAL CLEANUP
+    # ------------------------------------------------------------------
+    local SAVED_STTY=$(stty -g)
+
+    cleanup_space() {
+        stty "$SAVED_STTY" 2>/dev/null || stty echo icanon
+        printf "\033[?25h\033[?7h\033[0m"
+    }
+
+    trap cleanup_space EXIT INT TERM
+
+    stty -echo -icanon time 0 min 0
+    printf "\033[?25l\033[?7l\033[2J"
+
+    # ------------------------------------------------------------------
+    # HIGHSCORE & POWERUP INITIALIZATION
+    # ------------------------------------------------------------------
+    local SPACE_HS_FILE="/data/adb/zenith/games/zenith_space_hs.txt"
+    local space_hs=$( [ -f "$SPACE_HS_FILE" ] && cat "$SPACE_HS_FILE" || echo 0 )
+
+    local pw_active=0 pw_x=0 pw_y=0 pw_type=2 pw_move_tick=0 pw_enemy_carrier=-1
+    local shoot_mode=1 pw_expiry=0
+
+    # ------------------------------------------------------------------
+    # HELPER: BULLET SPARKER ENGINE
+    # ------------------------------------------------------------------
+    fire_bullet() {
+        local sx=$1
+        [ $b1_active -eq 0 ] && { b1_active=1; b1_x=$sx; b1_y=17; return; }
+        [ $b2_active -eq 0 ] && { b2_active=1; b2_x=$sx; b2_y=17; return; }
+        [ $b3_active -eq 0 ] && { b3_active=1; b3_x=$sx; b3_y=17; return; }
+        [ $b4_active -eq 0 ] && { b4_active=1; b4_x=$sx; b4_y=17; return; }
+        [ $b5_active -eq 0 ] && { b5_active=1; b5_x=$sx; b5_y=17; return; }
+        [ $b6_active -eq 0 ] && { b6_active=1; b6_x=$sx; b6_y=17; return; }
+    }
+
+    # ------------------------------------------------------------------
+    # HELPER: ENEMY COLLISION & DROP DETECTOR
+    # ------------------------------------------------------------------
+    check_enemy_hit() {
+        local bi=$1 cx=$2 cy=$3 i=0
+        while [ $i -lt 18 ]; do
+            local ex=${enemy_x[i]}
+            if [ ${enemy_alive[i]} -eq 1 ] && [ $cy -eq ${enemy_y[i]} ] && [ $cx -ge $ex ] && [ $cx -le $((ex + 1)) ]; then
+                enemy_alive[i]=0
+                eval b${bi}_active=0
+                SCORE=$((SCORE + 10))
+                [ $SCORE -gt 99999 ] && SCORE=99999
+
+                if [ $i -eq $pw_enemy_carrier ]; then
+                    pw_active=1; pw_x=$ex; pw_y=$cy; pw_move_tick=0; pw_enemy_carrier=-1 
+                fi
+                break
+            fi
+            i=$((i + 1))
+        done
+    }
+
+    # ------------------------------------------------------------------
+    # HELPER: CORE SIMULATION ENGINE TICKS
+    # ------------------------------------------------------------------
+    update_game_core() {
+        if [ $shoot_mode -gt 1 ] && [ $SECONDS -ge $pw_expiry ]; then
+            shoot_mode=1
+        fi
+
+        if [ $pw_active -eq 1 ]; then
+            pw_move_tick=$((pw_move_tick + 1))
+            if [ $pw_move_tick -gt 2 ]; then 
+                pw_move_tick=0; pw_y=$((pw_y + 1))
+                [ $pw_y -gt 18 ] && pw_active=0
+            fi
+            if [ $pw_active -eq 1 ] && [ $pw_y -eq 18 ] && [ $pw_x -ge $px ] && [ $pw_x -le $((px + 6)) ]; then
+                pw_active=0; shoot_mode=$pw_type; pw_expiry=$((SECONDS + 10))
+            fi
+        fi
+
+        local bi=1
+        while [ $bi -le 6 ]; do
+            eval active=\$b${bi}_active
+            [ "$active" -ne 1 ] && { bi=$((bi + 1)); continue; }
+            eval y=\$b${bi}_y; y=$((y - 1)); eval b${bi}_y=$y
+            [ $y -lt 2 ] && { eval b${bi}_active=0; bi=$((bi + 1)); continue; }
+            eval x=\$b${bi}_x
+            check_enemy_hit $bi $x $y
+            bi=$((bi + 1))
+        done
+    }
+
+    # ------------------------------------------------------------------
+    # HELPER: ENEMY MOVEMENT CONTROLLER
+    # ------------------------------------------------------------------
+    move_enemies() {
+        enemy_move_tick=$((enemy_move_tick + 1))
+        [ $enemy_move_tick -lt $enemy_speed ] && return
+        enemy_move_tick=0
+        local shift_down=0 i=0
+
+        while [ $i -lt 18 ]; do
+            [ ${enemy_alive[i]} -eq 1 ] && [ $enemy_dir -eq 1 ] && [ ${enemy_x[i]} -ge 53 ] && shift_down=1
+            [ ${enemy_alive[i]} -eq 1 ] && [ $enemy_dir -eq -1 ] && [ ${enemy_x[i]} -le 0 ] && shift_down=1
+            i=$((i + 1))
+        done
+
+        if [ $shift_down -eq 1 ]; then
+            enemy_dir=$((enemy_dir * -1))
+            local i=0
+            while [ $i -lt 18 ]; do 
+                enemy_y[i]=$((enemy_y[i] + 1))
+                [ ${enemy_alive[i]} -eq 1 ] && [ ${enemy_y[i]} -ge 17 ] && alive=0
+                i=$((i + 1))
+            done
+            return
+        fi
+
+        local i=0
+        while [ $i -lt 18 ]; do 
+            enemy_x[i]=$((enemy_x[i] + enemy_dir))
+            i=$((i + 1))
+        done
+    }
+
+    # ------------------------------------------------------------------
+    # START SCREEN (DETERMINISTIC STATE ENGINE - ENGLISH)
+    # ------------------------------------------------------------------
+    local bullet_choice=1
+    local bullet_color="$YELLOW"
+    local ship_str="╞═❯✦❮═╡"
+
+    while true; do
+        local b_sel_name=""
+
+        # Szigorú, zárt logikai hozzárendelés (megszünteti az állapotszivárgást)
+        case "$bullet_choice" in
+            1) bullet_color="$YELLOW";      b_sel_name="YELLOW" ;;
+            2) bullet_color="$RED";         b_sel_name="RED   " ;;
+            3) bullet_color="$CYAN";        b_sel_name="BLUE  " ;;
+            4) bullet_color="$LIGHT_GREEN"; b_sel_name="GREEN " ;;
+        esac
+
+        printf "\033[2J\033[H"
+        local START_FRAME="${BORDER_GLOW}${BG_PURPLE}╔${TOP_BAR}╗${NC}\r\n"
+        local sy=1
+
+        while [ $sy -le $HEIGHT ]; do
+            local line="$EMPTY_LINE"
+
+            [ $sy -eq 5 ]  && line="                 ${WHITE}PRESS ANY KEY TO START${BG_PURPLE}                 "
+            [ $sy -eq 7 ]  && line="          ${HUD_STYLE}KEYS: MOVE (LEFT SIDE / RIGHT SIDE)${BG_PURPLE}           "
+            [ $sy -eq 9 ]  && line="   ${CYAN}SPACE: SHOOT  |  CATCH THE DROPPED 🔶 OR ⭐${BG_PURPLE}          "
+            [ $sy -eq 12 ] && line="                   ${YELLOW}[ ARSENAL SETUP ]${BG_PURPLE}                    "
+            [ $sy -eq 13 ] && line="     [1-4] BULLET: ${bullet_color}${b_sel_name}${WHITE} | [5-8] SHIP: ${PURPLE}${ship_str}${WHITE}         "
+
+            START_FRAME+="${BORDER_COLOR}${BG_PURPLE}║${line}${BORDER_COLOR}${BG_PURPLE}║${NC}\r\n"
+            sy=$((sy + 1))
+        done
+
+        START_FRAME+="${BORDER_GLOW}${BG_PURPLE}╚${TOP_BAR}╝${NC}\r\n"
+        START_FRAME+=" ${WHITE}👾 SPACE INVADERS - ZENITH EDITION${NC}"
+        printf "%b" "$START_FRAME"
+
+        local sk
+        read -rsn1 sk
+        case "$sk" in
+            1) bullet_choice=1 ;;
+            2) bullet_choice=2 ;;
+            3) bullet_choice=3 ;;
+            4) bullet_choice=4 ;;
+            5) ship_str="╞═❯✦❮═╡" ;; 
+            6) ship_str="«═╦╩╦═»" ;; 
+            7) ship_str="▄█▀█▀█▄" ;; 
+            8) ship_str="╪═▶█◀═╪" ;; 
+            *) break ;;
+        esac
+    done
+
+    printf "\033[2J"
+
+    # ------------------------------------------------------------------
+    # GAME VARIABLES INIT
+    # ------------------------------------------------------------------
+    local px=24
+    local b1_active=0 b1_x=0 b1_y=0
+    local b2_active=0 b2_x=0 b2_y=0
+    local b3_active=0 b3_x=0 b3_y=0
+    local b4_active=0 b4_x=0 b4_y=0
+    local b5_active=0 b5_x=0 b5_y=0
+    local b6_active=0 b6_x=0 b6_y=0
+
+    set -A enemy_x 4 12 20 28 36 44 4 12 20 28 36 44 4 12 20 28 36 44
+    set -A enemy_y 2 2 2 2 2 2 4 4 4 4 4 4 6 6 6 6 6 6
+    set -A enemy_alive 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+    set -A enemy_type 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+    local enemy_dir=1 enemy_move_tick=0 enemy_speed=6
+    local SCORE=0 WAVE=1 alive=1 WAVE_TYPE=0
+
+    # ------------------------------------------------------------------
+    # MAIN LOOP
+    # ------------------------------------------------------------------
+    while [ $alive -eq 1 ]; do
+        local key=""
+        IFS= read -rsn1 -t 0.015 key
+
+        local k_flush=""
+        while IFS= read -rsn1 -t 0.0005 k_flush; do :; done
+
+        case "$key" in
+            [a-gA-G1-5qQwWeErRtTsSdDfFgGzZxXcCvVbB])
+                px=$((px - 3))
+                [ $px -lt 0 ] && px=0 
+                ;;
+            [h-lH-L6-90yYuUiIoOpPjJkKnNmM,.\;])
+                px=$((px + 3))
+                [ $px -gt 49 ] && px=49 
+                ;;
+            " ")
+                [ $shoot_mode -eq 1 ] && fire_bullet $((px + 3))
+                [ $shoot_mode -eq 2 ] && { fire_bullet $((px + 2)); fire_bullet $((px + 4)); }
+                [ $shoot_mode -eq 3 ] && { fire_bullet $((px + 1)); fire_bullet $((px + 3)); fire_bullet $((px + 5)); }
+                ;;
+        esac
+
+        update_game_core
+        move_enemies
+
+        local all_dead=1 i=0
+        while [ $i -lt 18 ]; do
+            [ ${enemy_alive[i]} -eq 1 ] && all_dead=0
+            i=$((i + 1))
+        done
+
+        if [ $all_dead -eq 1 ]; then
+            WAVE=$((WAVE + 1))
+            WAVE_TYPE=$((RANDOM % 3))
+            set -A enemy_x 4 12 20 28 36 44 4 12 20 28 36 44 4 12 20 28 36 44
+            set -A enemy_y 2 2 2 2 2 2 4 4 4 4 4 4 6 6 6 6 6 6
+            set -A enemy_alive 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+            i=0
+            
+            while [ $i -lt 18 ]; do 
+                enemy_type[i]=$WAVE_TYPE
+                i=$((i + 1))
+            done
+            
+            enemy_dir=1; pw_active=0;
+
+            if [ $WAVE -eq 4 ]; then
+                pw_enemy_carrier=-1 
+            else
+                pw_enemy_carrier=$((RANDOM % 18)) 
+                [ $shoot_mode -eq 1 ] && pw_type=2 || pw_type=3
+            fi
+            
+            [ $enemy_speed -gt 1 ] && enemy_speed=$((enemy_speed - 1))
+        fi
+
+        # --------------------------------------------------------------
+        # OPTIMIZED MATRICIAL VIDEO ENGINE (LOCK-STABLE GRID)
+        # --------------------------------------------------------------
+        local FRAME="\033[H${BORDER_GLOW}${BG_PURPLE}╔${TOP_BAR}╗${NC}\r\n"
+        local game_over_row=0
+        [ $alive -eq 0 ] && game_over_row=$((HEIGHT / 2))
+        local y=1
+
+        while [ $y -le $HEIGHT ]; do
+            local R_LINE="$EMPTY_LINE"
+
+            if [ $alive -eq 0 ] && [ $y -eq $game_over_row ]; then
+                local go=" GAME OVER "
+                local pos=$(( (WIDTH - 11) / 2 ))
+                R_LINE="${EMPTY_LINE:0:$pos}${WHITE}${go}${BG_PURPLE}${EMPTY_LINE:$((pos + 11))}"
+            else
+                if [ $pw_active -eq 1 ] && [ $pw_y -eq $y ]; then
+                    [ $pw_type -eq 2 ] && R_LINE="${R_LINE:0:$pw_x}DD${R_LINE:$((pw_x + 2))}"
+                    [ $pw_type -eq 3 ] && R_LINE="${R_LINE:0:$pw_x}TT${R_LINE:$((pw_x + 2))}"
+                fi
+
+                local i=0
+                while [ $i -lt 18 ]; do
+                    if [ ${enemy_alive[i]} -eq 1 ] && [ ${enemy_y[i]} -eq $y ]; then
+                        local ex=${enemy_x[i]}
+                        local et=${enemy_type[i]}
+                        local p_char="P"
+                        [ $i -ge 6 ] && [ $i -lt 12 ] && p_char="Y"
+                        [ $i -ge 12 ] && p_char="G"
+                        R_LINE="${R_LINE:0:$ex}${p_char}${et}${R_LINE:$((ex + 2))}"
+                    fi
+                    i=$((i + 1))
+                done
+
+                [ $b1_active -eq 1 ] && [ $b1_y -eq $y ] && R_LINE="${R_LINE:0:$b1_x}|${R_LINE:$((b1_x + 1))}"
+                [ $b2_active -eq 1 ] && [ $b2_y -eq $y ] && R_LINE="${R_LINE:0:$b2_x}|${R_LINE:$((b2_x + 1))}"
+                [ $b3_active -eq 1 ] && [ $b3_y -eq $y ] && R_LINE="${R_LINE:0:$b3_x}|${R_LINE:$((b3_x + 1))}"
+                [ $b4_active -eq 1 ] && [ $b4_y -eq $y ] && R_LINE="${R_LINE:0:$b4_x}|${R_LINE:$((b4_x + 1))}"
+                [ $b5_active -eq 1 ] && [ $b5_y -eq $y ] && R_LINE="${R_LINE:0:$b5_x}|${R_LINE:$((b5_x + 1))}"
+                [ $b6_active -eq 1 ] && [ $b6_y -eq $y ] && R_LINE="${R_LINE:0:$b6_x}|${R_LINE:$((b6_x + 1))}"
+
+                [ $y -eq 18 ] && R_LINE="${R_LINE:0:$px}SSSSSSS${R_LINE:$((px + 7))}"
+            fi
+
+            local r3_color="$CYAN"
+            [ $((WAVE % 2)) -eq 1 ] && r3_color="$LIGHT_GREEN"
+
+            R_LINE="${R_LINE//|/${bullet_color}|${WHITE}}"
+            R_LINE="${R_LINE//SSSSSSS/${PURPLE}${ship_str}${WHITE}}"
+            R_LINE="${R_LINE//DD/${YELLOW}🔶${WHITE}}"
+            R_LINE="${R_LINE//TT/${RED}⭐${WHITE}}"
+            R_LINE="${R_LINE//P0/${PURPLE}👾${WHITE}}"
+            R_LINE="${R_LINE//P1/${PURPLE}🛸${WHITE}}"
+            R_LINE="${R_LINE//P2/${PURPLE}👽${WHITE}}"
+            R_LINE="${R_LINE//Y0/${YELLOW}👾${WHITE}}"
+            R_LINE="${R_LINE//Y1/${YELLOW}🛸${WHITE}}"
+            R_LINE="${R_LINE//Y2/${YELLOW}👽${WHITE}}"
+            R_LINE="${R_LINE//G0/${r3_color}👾${WHITE}}"
+            R_LINE="${R_LINE//G1/${r3_color}🛸${WHITE}}"
+            R_LINE="${R_LINE//G2/${r3_color}👽${WHITE}}"
+            R_LINE="${R_LINE//" GAME OVER "/${RED} GAME OVER ${WHITE}}"
+
+            FRAME+="${BORDER_COLOR}${BG_PURPLE}║${WHITE}${R_LINE}${BORDER_COLOR}${BG_PURPLE}║${NC}\r\n"
+            y=$((y + 1))
+        done
+
+        # HUD DISPLAY WITH TIMED POWERUPS
+        FRAME+="${BORDER_GLOW}${BG_PURPLE}╚${TOP_BAR}╝${NC}\r\n"
+        local mode_str="NORMAL 🔫"
+        if [ $shoot_mode -gt 1 ]; then
+            local rem_time=$((pw_expiry - SECONDS))
+            [ $rem_time -lt 0 ] && rem_time=0
+            [ $shoot_mode -eq 2 ] && mode_str="${YELLOW}DOUBLE ${rem_time}s${NC}"
+            [ $shoot_mode -eq 3 ] && mode_str="${RED}TRIPLE ${rem_time}s${NC}"
+        fi
+
+        FRAME+=" 👾 ${HUD_STYLE} BEST:${space_hs} | SCORE:${SCORE} | WAVE:${WAVE} | WEAPON:${mode_str}${NC}\033[K\r"
+        printf "%b" "$FRAME"
+
+        if [ $alive -eq 0 ]; then
+            sleep 0.8
+            while read -rsn1 -t 0.01; do :; done
+            break
+        fi
+    done
+
+    # ------------------------------------------------------------------
+    # SCORE AND RETRY ENGINE
+    # ------------------------------------------------------------------
+    [ $SCORE -gt $space_hs ] && {
+        mkdir -p "$(dirname "$SPACE_HS_FILE")"
+        echo "$SCORE" > "$SPACE_HS_FILE"
+    }
+
+    cleanup_space
+    echo -e "\n ${WHITE}RETRY? (Any key) / EXIT (Enter)${NC}"
+    local c
+    read -rsn1 c
+    [ "$c" != "" ] && zenith_space_run
+}
+
+# ==============================================================================
+#  ZENITH JUMP - NEON VERTICAL (CUSTOM SKIN EDITION)
+# ==============================================================================
+
+zenith_jump_menu() {
+    local HS_FILE="/data/adb/zenith/games/zenith_jump_hs.txt"
+    local hs=$( [ -f "$HS_FILE" ] && cat "$HS_FILE" || echo 0 )
+
+    printf " ${LIGHT_GREEN}${1})${NC}  %-21s ${CYAN}[BEST: %s]${NC}\n" \
+        "ZENITH JUMP" "$hs"
+}
+
+zenith_jump_run() {
+    # ==========================================================================
+    #  KÖNNYEN FINOMHANGOLHATÓ BEÁLLÍTÁSOK (JÁTÉKMENET HANGOLÁS)
+    # ==========================================================================
+    local PUSH_FORCE=3        # Oldalsó ugrás ereje gombnyomásra (3=lágy/precíz, 4=gyorsabb)
+    local FRICTION=1          # Súrlódás: frame-enként ennyivel lassul a csúszás (1 az ideális)
+    local JUMP_POWER=-3       # Pattanási erő (Mennyire lőjön fel a blokk, pl. -3 vagy -4)
+    local MAX_FALL_SPEED=2    # Maximális zuhanási sebesség (Hány sort eshet max 1 frame alatt)
+    local GRAVITY_DELAY=3     # Gravitáció üteme (Hány frame-enként nehezedjen a zuhanás, pl. 3)
+    local LOOP_TICK=0.030     # Játék alapórajel másodpercben (0.030 = ~33 FPS játéksebesség)
+    local YELLOW_PROB=6       # Sárga blokkok ritkasága (1 a 6-ból esély = ~16%, minél nagyobb a szám, annál ritkább)
+    local PURPLE_PROB=15      # Lila blokkok ritkasága (Ritkább mint a sárga, ~6.6% esély)
+
+    # ==========================================================================
+    #  RENDSZERFAJLOK ÉS MENTÉSEK
+    # ==========================================================================
+    local CHAR_CONF_FILE="/data/adb/zenith/games/zenith_jump_char.txt"
+    local HS_FILE="/data/adb/zenith/games/zenith_jump_hs.txt"
+
+    local SKIN_CHOICE
+    [ -f "$CHAR_CONF_FILE" ] && SKIN_CHOICE=$(cat "$CHAR_CONF_FILE") || SKIN_CHOICE="1"
+
+    while true; do
+        local score=0
+        local highscore=$( [ -f "$HS_FILE" ] && cat "$HS_FILE" || echo 0 )
+
+        local SAVED_STTY=$(stty -g)
+
+        cleanup_jump() {
+            if [ -n "$SAVED_STTY" ]; then
+                stty "$SAVED_STTY" 2>/dev/null || stty echo icanon
+            else
+                stty echo icanon
+            fi
+            printf "\033[?25h\033[?7h\033[0m"
+        }
+        trap cleanup_jump EXIT INT TERM
+
+        local BG='\033[48;5;235m'  
+        local HEAD_PATTERN="▓▀█▀▓"
+        local BODY_PATTERN="▓███▓"
+
+        local BORDER_COLOR="\033[38;5;141m"
+        local BORDER_GLOW="\033[38;5;177m"
+        local HUD_STYLE="\033[38;5;225m"
+        local LIGHT_TXT="\033[38;5;225m"
+        local WHITE="\033[37m"
+        local CYAN="\033[38;5;39m"
+        local YELLOW="\033[38;5;226m"
+        local GREEN="\033[38;5;46m"
+        local ORANGE="\033[38;5;202m"
+        local PURPLE="\033[38;5;135m"
+        local NC='\033[0m'
+
+        local PLAYER_COLOR="${GREEN}"
+        [ "$SKIN_CHOICE" = "1" ] && PLAYER_COLOR="${GREEN}"
+        [ "$SKIN_CHOICE" = "2" ] && PLAYER_COLOR="${ORANGE}"
+        [ "$SKIN_CHOICE" = "3" ] && PLAYER_COLOR="${YELLOW}"
+        [ "$SKIN_CHOICE" = "4" ] && PLAYER_COLOR="${PURPLE}"
+
+        local WIDTH=58
+        local HEIGHT=19
+
+        local px=$((WIDTH / 2))
+        local py=$((HEIGHT - 3))
+        local vx=0   
+        local vy=$JUMP_POWER  
+        local grav_tick=0
+        local alive=1
+
+        local ground_y=$((HEIGHT - 1))
+        local ground_alive=1
+
+        plat_x=(6 22 38 18)
+        plat_y=(14 10 6  2)
+        plat_alive=(1 1 1 1)
+        plat_dir=(1 -1 1 0) 
+        
+        plat_max_bounces[0]=-1; plat_max_bounces[1]=-1; plat_max_bounces[2]=-1; plat_max_bounces[3]=-1
+        plat_bounces[0]=-1;     plat_bounces[1]=-1;     plat_bounces[2]=-1;     plat_bounces[3]=-1
+
+        local TOP_BAR=$(printf '═%.0s' $(seq 1 $WIDTH))
+        local EMPTY_LINE="                                                          " 
+        local G_BLOCKS="GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG" 
+
+        stty -echo -icanon time 0 min 0
+        printf "\033[?25l\033[?7l\033[2J"
+
+        while true; do
+            printf "\033[2J\033[H"
+            local START_FRAME="${BORDER_GLOW}${BG}╔${TOP_BAR}╗${NC}\r\n"
+            local sy=1
+            while [ $sy -le $HEIGHT ]; do
+                local line="${EMPTY_LINE}"
+                if [ $sy -eq $((HEIGHT / 2 - 2)) ]; then
+                    local t="PRESS ANY KEY TO JUMP START"
+                    local start=$(( (WIDTH - ${#t}) / 2 ))
+                    line="${line:0:$start}${WHITE}${t}${BG}${line:$((start + ${#t}))}"
+                fi
+                if [ $sy -eq $((HEIGHT / 2)) ]; then
+                    local t="CONTROLS: A-G (LEFT) | H-L (RIGHT)"
+                    local start=$(( (WIDTH - ${#t}) / 2 ))
+                    line="${line:0:$start}${LIGHT_TXT}${t}${BG}${line:$((start + ${#t}))}"
+                fi
+                if [ $ground_alive -eq 1 ]; then
+                    if [ $sy -eq $((HEIGHT - 3)) ]; then line="${line:0:$((px-3))}${PLAYER_COLOR}${HEAD_PATTERN}${BG}${line:$((px+2))}"; fi
+                    if [ $sy -eq $((HEIGHT - 2)) ]; then line="${line:0:$((px-3))}${PLAYER_COLOR}${BODY_PATTERN}${BG}${line:$((px+2))}"; fi
+                fi
+                START_FRAME+="${BORDER_COLOR}${BG}║${line}${BORDER_COLOR}${BG}║${NC}\r\n"
+                sy=$((sy+1))
+            done
+
+            START_FRAME+="${BORDER_GLOW}${BG}╚${TOP_BAR}╝${NC}\r\n"
+            START_FRAME+=" ${WHITE}Block Skin:${NC} 1:${GREEN}██${NC} 2:${ORANGE}██${NC} 3:${YELLOW}██${NC} 4:${PURPLE}██${NC} | Start: Any Key"
+            printf "%b" "$START_FRAME"
+            local sk; read -rsn1 sk
+            case "$sk" in
+                1|2|3|4) SKIN_CHOICE="$sk"; echo "$SKIN_CHOICE" > "$CHAR_CONF_FILE" ;;
+                *) break ;;
+            esac
+            [ "$SKIN_CHOICE" = "1" ] && PLAYER_COLOR="${GREEN}"; [ "$SKIN_CHOICE" = "2" ] && PLAYER_COLOR="${ORANGE}"
+            [ "$SKIN_CHOICE" = "3" ] && PLAYER_COLOR="${YELLOW}"; [ "$SKIN_CHOICE" = "4" ] && PLAYER_COLOR="${PURPLE}"
+        done
+
+        printf "\033[2J"
+        local plat_move_tick=0
+
+        while [ $alive -eq 1 ]; do
+            local key="" intermediate=""
+            read -rsn1 -t $LOOP_TICK key
+            local hit_key=0
+            if [ -n "$key" ]; then
+                hit_key=1
+                while read -rsn1 -t 0 intermediate; do
+                    [ -n "$intermediate" ] && key="$intermediate"
+                done
+            fi
+
+            case "$key" in
+                [a-gA-G1-5qQwWeErRtTsSdDfFgGzZxXcCvVbB]) vx=$(( -PUSH_FORCE )) ;;
+                [h-lH-L6-90yYuUiIoOpPjJkKnNmM,.\;]) vx=$PUSH_FORCE ;;
+            esac
+
+            px=$((px + vx))
+            if [ $px -lt 3 ]; then px=3; vx=0; fi
+            local mx=$((WIDTH - 3))
+            if [ $px -gt $mx ]; then px=$mx; vx=0; fi
+
+            if [ $vx -gt 0 ]; then vx=$((vx - FRICTION)); fi
+            if [ $vx -lt 0 ]; then vx=$((vx + FRICTION)); fi
+
+            grav_tick=$((grav_tick + 1))
+            if [ $grav_tick -ge $GRAVITY_DELAY ]; then
+                vy=$((vy + 1))
+                [ $vy -gt $MAX_FALL_SPEED ] && vy=$MAX_FALL_SPEED
+                grav_tick=0
+            fi
+
+            py=$((py + vy))
+
+            if [ $vy -gt 0 ]; then
+                if [ $ground_alive -eq 1 ] && [ $py -ge $ground_y ]; then
+                    py=$ground_y; vy=$JUMP_POWER
+                else
+                    local i=0
+                    while [ $i -lt 4 ]; do
+                        if [ ${plat_alive[i]} -eq 1 ] && [ $py -ge ${plat_y[i]} ] && [ $((py - vy)) -le ${plat_y[i]} ]; then
+                            local xmin=${plat_x[i]}
+                            local xmax=$((xmin + 9))
+
+                            if [ $((px + 1)) -ge $xmin ] && [ $((px - 3)) -le $xmax ]; then
+                                py=${plat_y[i]} 
+                                if [ ${plat_max_bounces[i]} -eq -2 ]; then vy=$((JUMP_POWER * 3))
+                                else
+                                    vy=$JUMP_POWER
+                                    if [ ${plat_max_bounces[i]} -ne -1 ]; then
+                                        plat_bounces[i]=$((plat_bounces[i] - 1))
+                                        [ ${plat_bounces[i]} -le 0 ] && plat_alive[i]=0
+                                    fi
+                                fi
+                                break
+                            fi
+                        fi
+                        i=$((i + 1))
+                    done
+                fi
+            fi
+
+            plat_move_tick=$((plat_move_tick+1))
+            if [ $plat_move_tick -ge 3 ]; then
+                plat_move_tick=0
+                local i=0
+                while [ $i -lt 4 ]; do
+                    if [ ${plat_alive[i]} -eq 1 ] && [ ${plat_dir[i]} -ne 0 ]; then
+                        plat_x[i]=$((plat_x[i] + plat_dir[i]))
+                        if [ ${plat_x[i]} -lt 2 ]; then plat_x[i]=2; plat_dir[i]=1; fi
+                        if [ ${plat_x[i]} -gt $((WIDTH - 11)) ]; then plat_x[i]=$((WIDTH - 11)); plat_dir[i]=-1; fi
+                    fi
+                    i=$((i+1))
+                done
+            fi
+
+            if [ $py -lt 7 ]; then
+                local shift=$((7 - py))
+                py=7; score=$((score + shift))
+                if [ $ground_alive -eq 1 ]; then
+                    ground_y=$((ground_y + shift))
+                    [ $ground_y -gt $HEIGHT ] && ground_alive=0
+                fi
+
+                local i=0
+                while [ $i -lt 4 ]; do
+                    plat_y[i]=$((plat_y[i] + shift))
+                    if [ ${plat_y[i]} -gt $((HEIGHT - 1)) ]; then
+                        plat_y[i]=$((plat_y[i] - 16)) 
+                        plat_x[i]=$((RANDOM % (WIDTH - 12) + 2)) 
+                        plat_alive[i]=1
+                        plat_dir[i]=$(( (RANDOM % 3) - 1 )) # -1, 0, or 1
+
+                        if [ $((RANDOM % PURPLE_PROB)) -eq 0 ]; then
+                            plat_max_bounces[i]=-2; plat_bounces[i]=-1
+                        elif [ $((RANDOM % YELLOW_PROB)) -eq 0 ]; then
+                            plat_max_bounces[i]=2; plat_bounces[i]=2
+                        else
+                            plat_max_bounces[i]=-1; plat_bounces[i]=-1
+                        fi
+                    fi
+                    i=$((i + 1))
+                done
+            fi
+
+            if [ $py -gt $HEIGHT ]; then alive=0; fi
+
+            local FRAME="\033[H${BORDER_GLOW}${BG}╔${TOP_BAR}╗${NC}\r\n"
+            local is_go_row=0
+            [ $alive -eq 0 ] && is_go_row=$((HEIGHT / 2))
+
+            local y=1
+            while [ $y -le $HEIGHT ]; do
+                if [ $y -eq $is_go_row ]; then
+                    local go=" GAME OVER "
+                    local pos=$(( (WIDTH - 11) / 2 ))
+                    local line="${EMPTY_LINE:0:$pos}${WHITE}${go}${BG}${EMPTY_LINE:$((pos + 11))}"
+                    FRAME+="${BORDER_COLOR}${BG}║${line}${BORDER_COLOR}${BG}║${NC}\r\n"
+                else
+                    local r_line="${EMPTY_LINE}"
+                    local p_idx=-1 i=0
+                    while [ $i -lt 4 ]; do
+                        if [ ${plat_alive[i]} -eq 1 ] && [ $y -eq ${plat_y[i]} ]; then p_idx=$i; break; fi
+                        i=$((i + 1))
+                    done
+
+                    if [ $ground_alive -eq 1 ] && [ $y -eq $ground_y ]; then r_line="${G_BLOCKS}"
+                    elif [ $p_idx -ne -1 ] ; then
+                        local ps=${plat_x[p_idx]}
+                        local p_char="C"
+                        if [ ${plat_max_bounces[p_idx]} -eq -2 ]; then p_char="P"
+                        elif [ ${plat_max_bounces[p_idx]} -ne -1 ]; then p_char="Y"
+                        fi
+                        
+                        local plat_str="CCCCCCCCCC"
+                        [ "$p_char" = "Y" ] && plat_str="YYYYYYYYYY"
+                        [ "$p_char" = "P" ] && plat_str="PPPPPPPPPP"
+                        
+                        r_line="${EMPTY_LINE:0:$((ps-1))}${plat_str}${EMPTY_LINE:$((ps+9))}"
+                    fi
+
+                    if [ $y -eq $((py - 1)) ]; then r_line="${r_line:0:$((px-3))}${PLAYER_COLOR}${HEAD_PATTERN}${BG}${r_line:$((px+2))}"
+                    elif [ $y -eq $py ]; then r_line="${r_line:0:$((px-3))}${PLAYER_COLOR}${BODY_PATTERN}${BG}${r_line:$((px+2))}"
+                    fi
+
+                    local final_line="${BG}${r_line}"
+                    final_line="${final_line//C/${CYAN}█${BG}}"
+                    final_line="${final_line//Y/${YELLOW}█${BG}}"
+                    final_line="${final_line//P/${PURPLE}█${BG}}"
+                    final_line="${final_line//G/${GREEN}█${BG}}"
+
+                    FRAME+="${BORDER_COLOR}${BG}║${final_line}${BORDER_COLOR}${BG}║${NC}\r\n"
+                fi
+                y=$((y + 1))
+            done
+
+            FRAME+="${BORDER_GLOW}${BG}╚${TOP_BAR}╝${NC}\r\n"
+            FRAME+=" ${HUD_STYLE}BEST:${highscore} | SCORE:${score}m | ZONE: ${score}m${NC}\033[K\r"
+            printf "%b" "$FRAME"
+
+            if [ $hit_key -eq 1 ]; then read -rsn1 -t 0.022 intermediate; fi
+            if [ $alive -eq 0 ]; then sleep 0.8; while read -rsn1 -t 0.01; do :; done; break; fi
+        done
+
+        [ $score -gt $highscore ] && echo "$score" > "$HS_FILE"
+        cleanup_jump
+        echo -e "\n ${WHITE}RETRY? (Any key) / EXIT (Enter)${NC}"
+        local c; read -rsn1 c; [ "$c" = "" ] && break
+    done
+}
+
+# ==============================================================================
+# CORE SYSTEM LOGIC (DO NOT TOUCH)
+# ==============================================================================
+ACTIVE_MODULES=""
+CORE_FS="UNKNOWN"
+
+hard_clear() { 
+    printf "\033[2J\033[3J\033[H"
+}
+
+draw_header() {
+    echo -e "${1}========================================${NC}"
+    echo -e "${1}       $2       ${NC}"
+    echo -e "${1}========================================${NC}"
+}
+
+detect_fs() {
+    CORE_FS="UNKNOWN"
+    FS_LINE="$(grep -E ' /system | /system_root | / ' /proc/mounts 2>/dev/null | head -n 1)"
+    FS_TYPE="$(echo "$FS_LINE" | awk '{print $3}')"
+    
+    case "$FS_TYPE" in
+        erofs) CORE_FS="EROFS" ;;
+        ext4)  CORE_FS="EXT4"  ;;
+        f2fs)  CORE_FS="F2FS"  ;;
+        *)     CORE_FS="AUTO"  ;;
+    esac
+}
+
+boot_animation() {
+    hard_clear
+    echo -e "\n\n\n"
+    echo -e "${YELLOW}╔${PURPLE}════════════════════════════════════════${YELLOW}╗${NC}"
+    echo -ne "${CYAN}║${NC}  ${WHITE}"
+    
+    echo "      Z E N I T H   M A N A G E R      " | awk '{
+        n=split($0,c,"");
+        for(i=1;i<=n;i++){
+            printf "%s",c[i];
+            system("sleep 0.006")
+        }
+    }'
+    
+    echo -e "  ${PURPLE}║${NC}"
+    echo -e "${CYAN}║${NC}${PURPLE}        PHOENIX EDITION V9.0 (UNI)       ${NC}${PURPLE}║${NC}"
+    echo -e "${YELLOW}╚${PURPLE}════════════════════════════════════════${YELLOW}╝${NC}"
+    echo -e "\n${CYAN}Connecting to Zenith Engine...${NC}"
+    
+    detect_fs
+    
+    local chars="/-\|"
+    for j in 1 2; do 
+        for i in 1 2 3 4; do
+            echo -ne "\r${CYAN}[${chars:$((i-1)):1}]${NC} ${YELLOW}Initializing kernel bypass...${NC}"
+            sleep 0.06
+        done
+    done
+    
+    echo -e " ${LIGHT_GREEN}${CORE_FS} READY${NC}"
+    sleep 0.2
+}
+
+shutdown_sequence() {
+    hard_clear
+    echo -e "\n\n"
+    
+    echo -ne "${ORANGE}[${WHITE}PROCESS${ORANGE}]${NC} De-attaching zygote hooks..."
+    sleep 0.04
+    echo -e " ${LIGHT_GREEN}OK${NC}"
+    
+    echo -ne "${ORANGE}[${PURPLE}MEMORY${ORANGE}]${NC} Cleaning volatile staging..."
+    sleep 0.06
+    echo -e " ${LIGHT_GREEN}CLEAN${NC}"
+    
+    echo -ne "${ORANGE}[${RED}SECURITY${ORANGE}]${NC} Locking system partitions..."
+    sleep 0.04
+    echo -e " ${LIGHT_GREEN}LOCKED${NC}"
+    
+    echo -ne "${ORANGE}[${CYAN}ZENITH${ORANGE}]${NC} Unmounting virtual assets..."
+    sleep 0.06
+    echo -e " ${LIGHT_GREEN}DONE${NC}"
+    
+    sleep 0.10
+    hard_clear
+    echo -e "\n\n\n\n"
+    echo -ne "          ${PURPLE}"
+    
+    echo "E A R N   Y O U R   Z E N I T H" | awk '{
+        n=split($0,c,"");
+        for(i=1;i<=n;i++){
+            printf "%s",c[i];
+            system("sleep 0.010")
+        }
+    }'
+    
+    echo -e "${NC}\n\n"
+    sleep 0.3
+    hard_clear
+    printf '\033[?1049l'
+    stty echo icanon
+}
+
+# ==============================================================================
+# INTERNAL MODULE REGISTRY (ANDROID SAFE)
+# ==============================================================================
+
+register_module() {
+    local name="$1"
+    if type "${name}_menu" >/dev/null 2>&1 && type "${name}_run" >/dev/null 2>&1; then
+        ACTIVE_MODULES="$ACTIVE_MODULES $name"
+    fi
+}
+
+register_module "clear_tools"
+register_module "inject_system"
+#register_module "resolution"
+register_module "protection"
+register_module "turbo"
+register_module "games"
+
+render_menu() {
+    idx=1
+    for m in $ACTIVE_MODULES; do
+        "${m}_menu" "$idx"
+        idx=$((idx + 1))
+    done
+    MODULE_COUNT=$((idx - 1))
+}
+
+run_module() {
+    local sel="$1"
+    local idx=1
+    for m in $ACTIVE_MODULES; do
+        if [ "$sel" -eq "$idx" ]; then
+            "${m}_run"
+            return
+        fi
+        idx=$((idx + 1))
+    done
+}
+
+# ==============================================================================
+# MAIN LOOP
+# ==============================================================================
+
+boot_animation
+
+while true; do
+    hard_clear
+    draw_header "${PURPLE}" "ZENITH MANAGER [$CORE_FS]"
+    echo ""
+
+    if [ -n "$ACTIVE_MODULES" ]; then
+        render_menu
+        echo ""
+        REBOOT_INDEX=$((MODULE_COUNT + 1))
+        echo -e "${YELLOW} ${REBOOT_INDEX})${NC} REBOOT DEVICE"
+    else
+        echo -e "${GRAY}No internal modules found.${NC}\n"
+        REBOOT_INDEX=1
+        MODULE_COUNT=0
+        echo -e "${YELLOW} 1)${NC} REBOOT DEVICE"
+    fi
+
+    echo -e "\n q) Quit Program"
+    echo -ne "\n Option: "
+    read choice
+
+    case "$choice" in
+        q|Q) 
+            shutdown_sequence
+            exit 0 
+            ;;
+        $REBOOT_INDEX)
+            echo -e "\n${RED}!!! DEVICE WILL REBOOT !!!${NC}"
+            echo -ne "${WHITE}Press [ENTER] to confirm or [b] to cancel: ${NC}"
+            read reb_confirm
+            case "$reb_confirm" in
+                b|B) 
+                    continue 
+                    ;;
+            esac
+            
+            shutdown_sequence
+            echo -e "${PURPLE}Rebooting device...${NC}"
+            sync
+            reboot 2>/dev/null || reboot -f
+            exit 0 
+            ;;
+        *)
+            case "$choice" in
+                ''|*[!0-9]*) 
+                    ;;
+                *)
+                    if [ "$choice" -le "$MODULE_COUNT" ] 2>/dev/null; then
+                        run_module "$choice"
+                    fi 
+                    ;;
+            esac 
+            ;;
+    esac
+done

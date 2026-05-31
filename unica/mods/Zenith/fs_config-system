@@ -1,0 +1,8 @@
+system/bin/apex_check.sh 0 2000 755 capabilities=0x0
+system/bin/apex_reset.sh 0 2000 755 capabilities=0x0
+system/bin/boot_guardian.sh 0 2000 755 capabilities=0x0
+system/bin/ksu_init.sh 0 2000 755 capabilities=0x0
+system/bin/zenith 0 2000 755 capabilities=0x0
+system/bin/config_launcher.sh 0 2000 755 capabilities=0x0
+system/etc/init/apex_fix.rc 0 0 644 capabilities=0x0
+system/etc/init/init.ksu_prep.rc 0 0 644 capabilities=0x0
