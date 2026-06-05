@@ -1,6 +1,16 @@
 # Now Brief
 ADD_TO_WORK_DIR "pa3qzcx" "system" "system/priv-app/SamsungSmartSuggestions/SamsungSmartSuggestions.apk"
 ADD_TO_WORK_DIR "pa3qzcx" "system" "system/priv-app/SamsungSmartSuggestions/oat"
+# HACK [
+# Samsung has released an update for the Smart suggestions app in March 2026.
+# The versioning of the "basic-global-release" flavor differs from the "full-global-release" one.
+# This is done on purpose: Samsung uses a lower version number to avoid installing this variant
+# on unsupported devices by triggering the downgrade check in PM. To avoid users updating to the
+# "non-AI" app, let's fake the versionCode so that it matches the latest available version.
+DECODE_APK "system" "system/priv-app/SamsungSmartSuggestions/SamsungSmartSuggestions.apk"
+LOG "- Patching versionCode in SamsungSmartSuggestions.apk"
+EVAL "sed -i \"s/710500000/711100100/g\" \"$APKTOOL_DIR/system/priv-app/SamsungSmartSuggestions/SamsungSmartSuggestions.apk/apktool.yml\""
+# ]
 SET_FLOATING_FEATURE_CONFIG "SEC_FLOATING_FEATURE_FRAMEWORK_SUPPORT_PERSONALIZED_DATA_CORE" "TRUE"
 
 # AI
