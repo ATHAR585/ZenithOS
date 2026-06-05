@@ -692,992 +692,767 @@ EOF
 }
 
 # ==============================================================================
-#  [ (🟣) ZENITH USERSPACE GOVERNOR FRAMEWORK - PRODUCTION GRADE ] 
+#  [ (🟣) ZENITH USERSPACE GOVERNOR v4.7-MASTER-APEX - HYBRID ENGINE ] 
 # ==============================================================================
 
-# Tier 1 IPC (RAMFS / tmpfs)
-IPC_DIR="/dev/zenith_ipc"
-METRICS_FILE="$IPC_DIR/metrics.state"
-THERM_STATE_FILE="$IPC_DIR/therm_state"
-TOUCH_STATE="$IPC_DIR/touch.state"
+SERVICE_D="/data/adb/service.d"
+BASE_DIR="/data/local/tmp/zenith"
+STOP_FLAG="$BASE_DIR/stop.flag"
+TELEMETRY_FLAG="$BASE_DIR/telemetry.flag"
 
-ENGINE_SCRIPT="/data/local/tmp/zenith_engine.sh"
-DISPATCHER_SCRIPT="/data/local/tmp/zenith_dispatcher.sh"
-SUPERVISOR_SCRIPT="/data/local/tmp/zenith_supervisor.sh"
-KERNEL_LOG="/data/local/tmp/zenith_kernel.log"
-KERNEL_MODE="/data/local/tmp/zenith_mode"
-
-Z_GREEN='\033[38;5;46m'
-Z_CYAN='\033[38;5;51m'
-Z_YELLOW='\033[38;5;226m'
-Z_PURPLE='\033[38;5;141m'
-Z_ORANGE='\033[38;5;214m'
-Z_RED='\033[38;5;196m'
-Z_WHITE='\033[38;5;231m'
-NC='\033[0m'
+Z_GREEN='\033[38;5;46m' ; Z_CYAN='\033[38;5;51m' ; Z_YELLOW='\033[38;5;226m'
+Z_PURPLE='\033[38;5;141m' ; Z_ORANGE='\033[38;5;214m' ; Z_RED='\033[38;5;196m' 
+Z_WHITE='\033[38;5;231m' ; Z_GRAY='\033[38;5;245m' ; NC='\033[0m'
 
 hard_clear() { printf "\033[2J\033[H"; }
-draw_header() { 
-    local color="$1" ; local title="$2"
-    echo -e "${color}====================================================${NC}"
-    echo -e "${color}  ${title}${NC}"
-    echo -e "${color}====================================================${NC}"
+
+draw_header() {
+    echo -e "${1}====================================================${NC}"
+    echo -e "${1}  ${2}${NC}"
+    echo -e "${1}====================================================${NC}"
 }
 
 check_turbo() {
-    if [ -n "$SERVICE_D" ] && [ -f "$SERVICE_D/zenith_turbo.sh" ]; then 
-        printf "%b" "${Z_GREEN}[ACTIVE]${NC}"
-    elif [ -f "$ZENITH_STAGING/zenith_turbo.sh" ]; then 
-        printf "%b" "${Z_YELLOW}[STAGED]${NC}"
-    else 
-        printf "%b" "${Z_RED}[OFF]${NC}"
-    fi
+    if pgrep -f "zenith_daemon.sh" >/dev/null; then echo -ne "${Z_GREEN}[ACTIVE]${NC}"
+    elif [ -f "$SERVICE_D/zenith_turbo.sh" ]; then echo -ne "${Z_YELLOW}[BOOT-READY]${NC}"
+    else echo -ne "${Z_RED}[OFFLINE]${NC}"; fi
 }
 
-init_ipc_layer() {
-    mkdir -p "$IPC_DIR" "$ZENITH_STAGING" 2>/dev/null
-    chmod 755 "$IPC_DIR" 2>/dev/null
-}
-
-is_zenith_running() {
-    local pidf="/data/local/tmp/zenith_supervisor.pid"
-    [ ! -f "$pidf" ] && return 1
-    local pid="" ; read -r pid < "$pidf" 2>/dev/null
-    [ -z "$pid" ] && return 1
-    if [ -d "/proc/$pid" ]; then
-        local cmdline=$(tr -d '\0' < "/proc/$pid/cmdline" 2>/dev/null)
-        case "$cmdline" in *zenith_supervisor*|*zenith_engine*|*zenith_dispatcher*) return 0 ;; esac
-    fi
-    return 1
-}
-
-zenith_kill_all() {
-    echo -e "\n${Z_RED}Stopping Zenith stack (hard sync)...${NC}"
-
-    # 1. PID file alapú kill
-    for f in zenith_engine zenith_dispatcher zenith_supervisor; do
-        local pidf="/data/local/tmp/${f}.pid"
-        if [ -f "$pidf" ]; then
-            local pid=""
-            read -r pid < "$pidf" 2>/dev/null
-            [ -n "$pid" ] && kill "$pid" 2>/dev/null
-        fi
-    done
-
-    # 2. Szigorú ".sh" szűrés, hogy véletlenül se ölje meg a menüt futtató shellt
-    pkill -f "zenith_engine.sh" 2>/dev/null
-    pkill -f "zenith_dispatcher.sh" 2>/dev/null
-    pkill -f "zenith_supervisor.sh" 2>/dev/null
-
-    sleep 1
-
-    # 3. Kernel limitek visszaállítása
-    [ -w "/dev/cpuset/top-app/cpus" ] && echo "0-7" > /dev/cpuset/top-app/cpus 2>/dev/null
-    [ -w "/dev/stune/top-app/schedtune.boost" ] && echo "0" > /dev/stune/top-app/schedtune.boost 2>/dev/null
-
-    # 4. Teljes IPC és fájl wipe
-    rm -rf "$IPC_DIR" 2>/dev/null
-    rm -f /data/local/tmp/zenith_*.pid 2>/dev/null
-    rm -f /data/local/tmp/zenith_*.err 2>/dev/null
-    rm -f "$ZENITH_STAGING/zenith_turbo.sh" "$SERVICE_D/zenith_turbo.sh" 2>/dev/null
+check_telem() {
+    if [ -f "$TELEMETRY_FLAG" ]; then echo -ne "${Z_GREEN}[ON]${NC}"
+    else echo -ne "${Z_GRAY}[OFF]${NC}"; fi
 }
 
 toggle_turbo_system() {
-    init_ipc_layer
-
-    # JAVÍTOTT: Kizárólag a biztos fájlokat és a validált futást nézi, nincs nyers pgrep
-    if is_zenith_running || [ -f "$ZENITH_STAGING/zenith_turbo.sh" ] || [ -f "$SERVICE_D/zenith_turbo.sh" ]; then
+    if pgrep -f "zenith_daemon" >/dev/null || [ -f "$SERVICE_D/zenith_turbo.sh" ]; then
+        echo -e "${Z_YELLOW}Initiating graceful shutdown sequence...${NC}"
+        touch "$STOP_FLAG"
+        sleep 0.2
+        pkill -9 -f "zenith_daemon.sh" 2>/dev/null
         
-        zenith_kill_all
+        for disk in /sys/block/sda/queue/read_ahead_kb /sys/block/mmcblk0/queue/read_ahead_kb; do
+            [ -w "$disk" ] && echo 128 > "$disk" 2>/dev/null
+        done
+        echo 100 > /proc/sys/vm/vfs_cache_pressure 2>/dev/null
+        echo 130 > /proc/sys/vm/swappiness 2>/dev/null
+        
+        sleep 0.2
+        umount /dev/zenith 2>/dev/null  
+        rm -rf /dev/zenith "$BASE_DIR" "$SERVICE_D/zenith_turbo.sh" 2>/dev/null
+        echo -e "${Z_GRAY}Governor successfully forced OFFLINE.${NC}"  
+        sleep 1  
+    else  
+        echo -e "${Z_CYAN}Initializing Zenith Deep Sleep Safe Engine (v4.7-APEX)...${NC}"  
+        mkdir -p "$BASE_DIR" 2>/dev/null  
+        rm -f "$STOP_FLAG"  
+        rm -f "$TELEMETRY_FLAG" 
 
-        echo "1" > "$KERNEL_MODE" 2>/dev/null
-        sync
-
-        echo -e "${Z_GREEN}Zenith FULL STOP complete. Daemon is [OFF].${NC}"
-        sleep 0.5
-        return
-    fi
-
-    # --- BEKAPCSOLÁSI (START) ÁG ---
-    echo -e "\n${Z_YELLOW}Starting Zenith stack (clean boot)...${NC}"
-
-    init_ipc_layer
-    rm -f /data/local/tmp/zenith_*.pid
-
-    cat > "$ZENITH_STAGING/zenith_turbo.sh" << 'EOF'
+        cat > "$SERVICE_D/zenith_turbo.sh" << 'EOF'
 #!/system/bin/sh
-until [ "$(getprop sys.boot_completed)" = "1" ] && [ "$(getprop init.svc.surfaceflinger)" = "running" ]; do sleep 2; done
 
-renice -10 $(pidof surfaceflinger) 2>/dev/null
-renice -6 $(pidof system_server) 2>/dev/null
+# A daemon azonnal indul és lekezeli a Boot Burstöt a bootolás alatt.
+sh /data/local/tmp/zenith/zenith_daemon.sh >/dev/null 2>&1 &
+
+# Grace Boot: Várakozás a rendszerfelállásra a kernel szintű paraméterek előtt.
+until [ "$(getprop init.svc.bootanim)" = "stopped" ]; do sleep 2; done
+
 setprop sys.lmk.minfree_levels "18432,23040,27648,32256,55296,80640" 2>/dev/null
 
-sh /data/local/tmp/zenith_supervisor.sh >/dev/null 2>&1 &
+for q in /sys/block/*/queue/scheduler; do
+    [ -f "$q" ] || continue
+    grep -q "bfq" "$q" && echo "bfq" > "$q" || echo "mq-deadline" > "$q"
+done
 EOF
+        chmod 755 "$SERVICE_D/zenith_turbo.sh"
 
-    chmod 755 "$ZENITH_STAGING/zenith_turbo.sh"
-    
-    echo -e "${Z_YELLOW}Daemon [STAGED]. Ready for injection.${NC}"
-    sleep 0.5
-
-    # ======================================================================
-    # [ (🟢) COMPONENT 1: ENGINE - ZERO-FORK & PID CACHE ]
-    # ======================================================================
-     cat > "$ENGINE_SCRIPT" << 'EOF'
+        cat > "$BASE_DIR/zenith_daemon.sh" << 'EOF'
 #!/system/bin/sh
-trap 'rm -f /data/local/tmp/zenith_engine.pid' EXIT
-echo $$ > "/data/local/tmp/zenith_engine.pid"
-exec 2>> /data/local/tmp/zenith_engine.err
+# ==============================================================================
+# ZENITH v4.7-MASTER-APEX (DEEP SLEEP SAFE + AI THERMAL + GRACE BOOT + SOFT BURST)
+# ==============================================================================
+BASE_DIR="/data/local/tmp/zenith"
+STOP_FLAG="$BASE_DIR/stop.flag"
+TELEMETRY_FLAG="$BASE_DIR/telemetry.flag"
 
-BOOT_WAIT=0
-while [ "$(getprop sys.boot_completed)" != "1" ] || [ "$(getprop init.svc.surfaceflinger)" != "running" ]; do
-    BOOT_WAIT=$((BOOT_WAIT + 1))
-    [ "$BOOT_WAIT" -gt 45 ] && break
-    sleep 2
-done
+rm -f "$TELEMETRY_FLAG"
 
-IPC_DIR="/dev/zenith_ipc"
-METRICS_FILE="$IPC_DIR/metrics.state"
-TOUCH_STATE="$IPC_DIR/touch.state"
+SHM_DIR="/dev/zenith"
+mkdir -p "$SHM_DIR" 2>/dev/null
+mount -t tmpfs -o size=2m tmpfs "$SHM_DIR" 2>/dev/null || SHM_DIR="/data/local/tmp/zenith_shm"
+mkdir -p "$SHM_DIR"
 
-TZ_CACHE=""
-for zone in /sys/class/thermal/thermal_zone*; do
-    [ -d "$zone" ] || continue
-    read -r TYPE < "$zone/type" 2>/dev/null
-    TYPE_L=$(echo "$TYPE" | tr '[:upper:]' '[:lower:]')
-    w=0
-    case "$TYPE_L" in
-        *big*|*cpu-big*|*mngs*) w=4 ;; *mid*) w=3 ;; *little*) w=2 ;; *gpu*|*g3d*) w=3 ;; *soc*|*ap*|*cpu*|*exynos*) w=3 ;;
-    esac
-    [ "$w" -gt 0 ] && [ -f "$zone/temp" ] && TZ_CACHE="$TZ_CACHE $zone/temp:$w"
-done
+METRICS_FILE="$SHM_DIR/metrics.state"
+TELEMETRY_FILE="$SHM_DIR/telemetry.state"
+TOUCH_STATE="$SHM_DIR/touch.state"
 
-GPU_FREQ_PATH=""
-for g in /sys/class/devfreq/*mali* /sys/devices/platform/*mali* /sys/class/misc/mali0/device /sys/kernel/gpu; do
-    for f in cur_freq clock gpu_clock cur_clock frequency; do
-        if [ -f "$g/$f" ]; then GPU_FREQ_PATH="$g/$f"; break 2; fi
-    done
-done
+echo "0" > "$TOUCH_STATE"
+touch "$METRICS_FILE"
 
-GPU_BUSY_PATH=""
-for g in /sys/class/devfreq/*mali* /sys/devices/platform/*mali* /sys/kernel/gpu; do
-    for f in gpu_busy utilization load; do
-        if [ -f "$g/$f" ]; then GPU_BUSY_PATH="$g/$f"; break 2; fi
-    done
-done
+TOUCH_DEV=$(getevent -pl 2>/dev/null | awk '
+    /add device/ { for(i=1;i<=NF;i++) if($i ~ /^\/dev\/input/) { dev=$i; break; } }
+    /touchscreen|sec_touchscreen|touch|fts|goodix/i {print dev; exit}
+')
+[ -z "$TOUCH_DEV" ] && TOUCH_DEV="/dev/input/event2"
 
-read_soc_temp() {
-    local total=0 ; local weight=0
-    for item in $TZ_CACHE; do
-        local path="${item%:*}" ; local w="${item#*:}"
-        local raw_t="" ; read -r raw_t < "$path" 2>/dev/null
-        [ -n "$raw_t" ] || continue
-        local TEMP=$raw_t
-        if [ "$TEMP" -gt 1000 ]; then TEMP=$((TEMP / 1000))
-        elif [ "$TEMP" -gt 200 ]; then TEMP=$((TEMP / 10)); fi
-        total=$((total + TEMP * w))
-        weight=$((weight + w))
-    done
-    [ "$weight" -eq 0 ] && echo 0 && return
-    echo $((total / weight))
-}
-
-(
-    # Zero-Block Input Abstraction
-    TOUCH_DEV=""
-    for dev in /dev/input/event*; do
-        if getevent -p "$dev" 2>/dev/null | grep -q "ABS_MT_POSITION"; then
-            TOUCH_DEV="$dev"
-            break
-        fi
-    done
-    
-    if [ -n "$TOUCH_DEV" ]; then
-        while getevent -qlc 1 "$TOUCH_DEV" >/dev/null 2>&1; do
-            read -r uptime _ < /proc/uptime
-            echo "${uptime%.*}" > "$TOUCH_STATE" 2>/dev/null
+# ------------------------------------------------------------------------------
+# 1. INPUT DAEMON (Blocking & 0% Overhead)
+# ------------------------------------------------------------------------------
+input_daemon() {
+    while [ ! -f "$STOP_FLAG" ]; do
+        # Blocking olvasás, nincs polling CPU overhead.
+        # Képernyő kikapcsolva = hardware nem küld eventet = Deep Sleep Safe.
+        getevent -lt "$TOUCH_DEV" 2>/dev/null | grep --line-buffered -E "EV_ABS|BTN_TOUCH" | while read -r _; do
+            if [ -f "$STOP_FLAG" ]; then break; fi
+            echo "$(date +%s)" > "$TOUCH_STATE"
         done
-    fi
-) &
-
-get_foreground_pkg() {
-    local top_pid=$(head -n 1 /dev/cpuset/top-app/tasks 2>/dev/null)
-    if [ -n "$top_pid" ] && [ -f "/proc/$top_pid/cmdline" ]; then
-        tr -d '\0' < "/proc/$top_pid/cmdline" 2>/dev/null | cut -d':' -f1
-    else
-        echo "NORMAL"
-    fi
+        sleep 1
+    done
 }
 
-: > "$TOUCH_STATE"
-
-LAST_FOCUS_CHECK=0
-LAST_HEARTBEAT=0
-LAST_TOP_PID=""
-LAST_CMDLINE="NORMAL"
-FOCUS_PKG="NORMAL"
-LAST_HASH=""
-LAST_PROF=""
-SEQ=0
-LAST_IOWAIT=0
-LAST_TOTAL=0
-LAST_IDLE=0
-CPU_EMA=0
-
-FOCUS_CHECK_INTERVAL=2
-
-while true; do
-    read -r uptime _ < /proc/uptime
-    NOW="${uptime%.*}"
-
-    # PID Cache: Zero-Fork App profiler
-    if [ $((NOW - LAST_FOCUS_CHECK)) -ge "$FOCUS_CHECK_INTERVAL" ]; then
-        if read -r TOP_PID < /dev/cpuset/top-app/tasks 2>/dev/null; then
-            if [ "$TOP_PID" != "$LAST_TOP_PID" ]; then
-                if read -r cmdline < "/proc/$TOP_PID/cmdline" 2>/dev/null; then
-                    LAST_CMDLINE="$cmdline"
-                fi
-                LAST_TOP_PID="$TOP_PID"
-            fi
-        fi
-        FOCUS_PKG="$LAST_CMDLINE"
-        LAST_FOCUS_CHECK=$NOW
-    fi
-
-    case "$FOCUS_PKG" in
-        *camera*|*imaging*|*gallery*|*snapchat*|*instagram*|*tiktok*|*photo*|*semgallery*) PROF="SUSTAIN" ;;
-        *youtube*|*netflix*|*vlc*|*player*|*hulu*|*disney*|*prime*|*video*|*vando*|*twitch*) PROF="SUSTAIN" ;;
-        *unity*|*unreal*|*genshin*|*pubg*|*codm*|*roblox*|*supercell*|*mojang*|*game*|*tencent*|*ea*|*epicgames*) PROF="BURST" ;;
-        *benchmark*|*antutu*|*geekbench*|*3dmark*|*passmark*|*cpuid*) PROF="BURST" ;;
-        *) PROF="NORMAL" ;;
-    esac
-
-    read -r cpu u n s id io irq sirq steal guest guest_nice < /proc/stat
-    total=$((u + n + s + id + io + irq + sirq + steal + guest + guest_nice))
-    idle=$((id + io))
-    
-    diff_total=$((total - LAST_TOTAL))
-    diff_idle=$((idle - LAST_IDLE))
-    if [ "$diff_total" -gt 0 ]; then
-        RAW_USAGE=$(( (diff_total - diff_idle) * 100 / diff_total ))
-        CPU_EMA=$(( (CPU_EMA * 7 + RAW_USAGE * 3) / 10 ))
-    else
-        RAW_USAGE=0
-    fi
-    CPU_USAGE=$CPU_EMA
-    LAST_TOTAL=$total
-    LAST_IDLE=$idle
-
-    # Zero-Fork Memory Pressure Check
-    MEM_STALL=0
-    if read -r _ some_line < /proc/pressure/memory 2>/dev/null; then
-        case "$some_line" in
-            *avg10=*)
-                avg10="${some_line#*avg10=}" ; avg10="${avg10%% *}" ; mem_val="${avg10%.*}"
-                [ "${mem_val:-0}" -gt 20 ] && MEM_STALL=1
-                ;;
-        esac
-    fi
-
-    # Zero-Fork IO Pressure Check
-    IO_STALL=0
-    if read -r _ line < /proc/pressure/io 2>/dev/null; then
-        case "$line" in
-            *avg10=*)
-                tmp="${line#*avg10=}" ; tmp="${tmp%% *}" ; io_b="${tmp%.*}"
-                [ "${io_b:-0}" -gt 15 ] && IO_STALL=1
-                ;;
-        esac
-    else
-        if [ "$LAST_IOWAIT" -gt 0 ]; then
-            io_delta=$((io - LAST_IOWAIT))
-            [ "$io_delta" -lt 0 ] && io_delta=0
-            [ "$io_delta" -gt 50 ] && IO_STALL=1
-        fi
-        LAST_IOWAIT=$io
-    fi
-
-    SOC_TEMP=$(read_soc_temp)
-    
-    STAT=0
-    if [ -f /sys/class/power_supply/battery/status ]; then
-        T="" ; read -r T < /sys/class/power_supply/battery/status 2>/dev/null
-        case "$T" in [Cc]harging*|[Ff]ull*) STAT=1 ;; esac
-    fi
-
-    CUR_SCREEN=0
-    BRIGHTNESS_PCT=0
-    for bl in /sys/class/backlight/*/brightness; do
-        [ -f "$bl" ] || continue
-        br="" ; read -r br < "$bl" 2>/dev/null
-        if [ "${br:-0}" -gt 0 ]; then 
-            CUR_SCREEN=1
-            max_bl="${bl%brightness}max_brightness"
-            max_br=255
-            [ -f "$max_bl" ] && read -r max_br < "$max_bl" 2>/dev/null
-            [ "${max_br:-255}" -eq 0 ] && max_br=255
-            BRIGHTNESS_PCT=$((br * 100 / max_br))
-            break 
-        fi
+# ------------------------------------------------------------------------------
+# 2. ENGINE DAEMON (EMA + Data Collector)
+# ------------------------------------------------------------------------------
+engine_daemon() {
+    TZ_CACHE=""
+    for zone in /sys/class/thermal/thermal_zone*; do
+        [ -d "$zone" ] || continue
+        read -r TYPE < "$zone/type" 2>/dev/null
+        TYPE_L=$(echo "$TYPE" | tr '[:upper:]' '[:lower:]')
+        w=0
+        case "$TYPE_L" in *big*|*mngs*) w=4 ;; *mid*) w=3 ;; *gpu*|*g3d*) w=3 ;; *soc*|*ap*) w=3 ;; esac
+        [ "$w" -gt 0 ] && [ -f "$zone/temp" ] && TZ_CACHE="$TZ_CACHE $zone/temp:$w"
     done
 
-    G_FREQ="0"
-    if [ -n "$GPU_FREQ_PATH" ] && [ -f "$GPU_FREQ_PATH" ]; then
-        read -r raw_g < "$GPU_FREQ_PATH" 2>/dev/null
-        case "$raw_g" in
-            ''|*[!0-9]*) G_FREQ=0 ;;
-            *)
-                if [ "$raw_g" -ge 1000000 ]; then G_FREQ=$((raw_g / 1000000))
-                elif [ "$raw_g" -ge 1000 ]; then G_FREQ=$((raw_g / 1000))
-                else G_FREQ=$raw_g ; fi
-            ;;
-        esac
-    fi
+    LAST_FOCUS_CHECK=0; FOCUS_PKG="NORMAL"; PROF="NORMAL"
+    LAST_IDLE=0; LAST_TOTAL=0; CPU_FAST=0; CPU_SLOW=0
+    STAT=0; CHARGE_TICK=0; FRAME_ID=0; LAST_TEMP=0
+    EMA_SAMPLES=0; EMA_READY=0
 
-    # Zero-Fork GPU Load 
-    GPU_LOAD=0
-    if [ -n "$GPU_BUSY_PATH" ] && [ -f "$GPU_BUSY_PATH" ]; then
-        read -r raw_gb < "$GPU_BUSY_PATH" 2>/dev/null
-        case "$raw_gb" in
-            *" "*)
-                g_busy="${raw_gb% *}" ; g_total="${raw_gb#* }"
-                if [ "${g_total:-0}" -gt 0 ]; then GPU_LOAD=$((g_busy * 100 / g_total)); fi
-                ;;
-            *)
-                clean_load="${raw_gb%% *}" ; clean_load="${clean_load%.*}"
-                [ -n "$clean_load" ] && GPU_LOAD="$clean_load"
-                ;;
-        esac
-    fi
-
-    STATE_HASH=$((SOC_TEMP*131 + G_FREQ*17 + CPU_USAGE*7 + GPU_LOAD*3 + IO_STALL*5 + MEM_STALL*2))
-    
-    if [ "$STATE_HASH" != "$LAST_HASH" ] || [ "$PROF" != "$LAST_PROF" ] || [ $((NOW - LAST_HEARTBEAT)) -ge 10 ]; then
-        LAST_HASH="$STATE_HASH"
-        LAST_PROF="$PROF"
-        LAST_HEARTBEAT=$NOW
-        SEQ=$((SEQ + 1))
-        CRC=$((SEQ + SOC_TEMP*3 + G_FREQ*7 + CPU_USAGE*11))
-
-        TMPF="${METRICS_FILE}.$$.tmp"
-        echo "${SEQ}|${SOC_TEMP}|${CUR_SCREEN}|${BRIGHTNESS_PCT}|${G_FREQ}|${GPU_LOAD}|${STAT}|${PROF}|${CPU_USAGE}|${IO_STALL}|${MEM_STALL}|${CRC}" > "$TMPF"
-        mv -f "$TMPF" "$METRICS_FILE" 2>/dev/null
-    fi
-
-    if [ "$PROF" = "BURST" ] || [ "$CPU_USAGE" -ge 80 ] || [ "$GPU_LOAD" -ge 80 ]; then sleep 1
-    else sleep 2; fi
-done
-EOF
-    chmod 755 "$ENGINE_SCRIPT"
-
-    # ======================================================================
-    # [ (🔵) COMPONENT 2: DISPATCHER - TICK SCHEDULER & SEQLOCK ]
-    # ======================================================================
-    cat > "$DISPATCHER_SCRIPT" << 'EOF'
-#!/system/bin/sh
-trap 'rm -f /data/local/tmp/zenith_dispatcher.pid' EXIT
-echo $$ > "/data/local/tmp/zenith_dispatcher.pid"
-exec 2>> /data/local/tmp/zenith_dispatcher.err
-
-KERNEL_LOG="/data/local/tmp/zenith_kernel.log"
-
-get_clean_timestamp() { date +"%y.%m.%d.%H:%M:%S" ; }
-
-safe_write() {
-    local path="$1"
-    local val="$2"
-    [ -w "$path" ] || return
-    if ! echo "$val" > "$path" 2>/dev/null; then
-        echo "$(get_clean_timestamp) | WRITE_FAIL:$path:$val" >> "$KERNEL_LOG"
-    fi
-}
-
-IPC_DIR="/dev/zenith_ipc"
-KERNEL_MODE="/data/local/tmp/zenith_mode"
-LOG_BUF="$IPC_DIR/log.buf"
-THERM_STATE_FILE="$IPC_DIR/therm_state"
-TOUCH_STATE="$IPC_DIR/touch.state"
-METRICS_FILE="$IPC_DIR/metrics.state"
-
-LAST_SEQ=0 ; LAST_OK_SEQ=-1 ; MODEX=1 ; LAST_MODE=1 
-FAST_T=45 ; LAST_FAST_T=45
-LAST_SCREEN_IS_ON=0
-LOG_COUNT=0
-
-HYSTERESIS_TICKS=5
-LAST_CANDIDATE=-1
-CANDIDATE_COUNT=0
-
-THERMAL_SCORE=0
-THERM_HOLD_UNTIL=0
-POST_THERM_RECOVERY_UNTIL=0
-THERMAL_LOCK_UNTIL=0
-LAST_FREQ_COMMIT=0
-
-LAST_BURST_ENTER=0
-INPUT_GRACE_UNTIL=0
-LAST_TOUCH_TS="0"
-
-LAST_DOWNGRADE=0
-MODE_DOWNGRADE_LOCK=10
-NORMAL_UNLOCK_TEMP=57 
-BURST_HEADROOM=62
-
-LAST_GPU_MAX="" ; LAST_GPU_MIN=""
-LAST_P0_MAX="" ; LAST_P4_MAX="" ; LAST_P6_MAX=""
-LAST_P0_MIN="" ; LAST_P4_MIN="" ; LAST_P6_MIN=""
-LAST_CPUSET_STATE="NORMAL"
-FORCE_NORMAL_AT=0
-
-GPU_PATH=""
-for g in /sys/class/devfreq/*mali* /sys/devices/platform/*mali* /sys/kernel/gpu; do
-    if [ -f "$g/max_freq" ]; then GPU_PATH="$g"; break; fi
-    if [ -f "$g/scaling_max_freq" ]; then GPU_PATH="$g"; break; fi
-done
-
-check_touch_state() {
-    [ ! -f "$TOUCH_STATE" ] && return 1
-    local TS=""
-    read -r TS < "$TOUCH_STATE" 2>/dev/null || return 1
-    if [ -n "$TS" ] && [ "$TS" != "$LAST_TOUCH_TS" ]; then
-        LAST_TOUCH_TS="$TS"
-        return 0
-    fi
-    return 1
-}
-
-apply_profile() {
-    local GPU_MAX GPU_MIN P0_MAX P4_MAX P6_MAX P0_MIN P4_MIN P6_MIN
-
-    case "$1" in
-        1) GPU_MAX=455000; GPU_MIN=260000; P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2496000; P0_MIN=300000; P4_MIN=400000; P6_MIN=400000 ;;
-        2) GPU_MAX=572000; GPU_MIN=350000; P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2496000; P0_MIN=400000; P4_MIN=500000; P6_MIN=546000 ;;
-        3) GPU_MAX=572000; GPU_MIN=455000; P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2496000; P0_MIN=500000; P4_MIN=741000; P6_MIN=806000 ;;
-        4) GPU_MAX=340000; GPU_MIN=260000; P0_MAX=1300000; P4_MAX=1560000; P6_MAX=1560000; P0_MIN=300000; P4_MIN=400000; P6_MIN=400000 ;;
-    esac
-    
-    if [ "$1" -eq 4 ] && [ "$LAST_CPUSET_STATE" != "RESTRICTED" ]; then
-        safe_write "/dev/cpuset/top-app/cpus" "0-6"
-        safe_write "/dev/stune/top-app/schedtune.boost" "0"
-        LAST_CPUSET_STATE="RESTRICTED"
-    elif [ "$1" -ne 4 ] && [ "$LAST_CPUSET_STATE" != "NORMAL" ]; then
-        safe_write "/dev/cpuset/top-app/cpus" "0-7"
-        safe_write "/dev/stune/top-app/schedtune.boost" "0"
-        LAST_CPUSET_STATE="NORMAL"
-    fi
-    
-    if [ "$1" -eq 3 ] && [ -w "/dev/stune/top-app/schedtune.boost" ]; then safe_write "/dev/stune/top-app/schedtune.boost" "12"
-    elif [ "$1" -eq 2 ] && [ -w "/dev/stune/top-app/schedtune.boost" ]; then safe_write "/dev/stune/top-app/schedtune.boost" "6"
-    elif [ "$1" -eq 1 ] && [ -w "/dev/stune/top-app/schedtune.boost" ] && [ "$LAST_CPUSET_STATE" = "NORMAL" ]; then safe_write "/dev/stune/top-app/schedtune.boost" "0"; fi
-
-    if [ -n "$GPU_PATH" ]; then
-        if [ "$LAST_GPU_MAX" != "$GPU_MAX" ]; then
-            if [ -f "$GPU_PATH/scaling_max_freq" ]; then safe_write "$GPU_PATH/scaling_max_freq" "$GPU_MAX"
-            elif [ -f "$GPU_PATH/max_freq" ]; then safe_write "$GPU_PATH/max_freq" "$GPU_MAX"; fi
-            LAST_GPU_MAX="$GPU_MAX"
+    while [ ! -f "$STOP_FLAG" ]; do
+        NOW=$(date +%s)
+        FRAME_ID=$((FRAME_ID + 1))
+        
+        SCREEN_ON=0
+        for bl in /sys/class/backlight/*/brightness; do
+            [ -f "$bl" ] || continue
+            read -r br < "$bl" 2>/dev/null
+            if [ "${br:-0}" -gt 0 ]; then SCREEN_ON=1 ; break ; fi
+        done
+        
+        TOUCH_TS=$(cat "$TOUCH_STATE" 2>/dev/null)
+        [ -n "$TOUCH_TS" ] && [ $((NOW - TOUCH_TS)) -le 2 ] && TOUCH_ACTIVE=1 || TOUCH_ACTIVE=0
+        
+        [ "$TOUCH_ACTIVE" -eq 1 ] && FOCUS_CHECK_INTERVAL=2 || FOCUS_CHECK_INTERVAL=5
+        
+        if [ "$SCREEN_ON" -eq 1 ] && [ $((NOW - LAST_FOCUS_CHECK)) -ge "$FOCUS_CHECK_INTERVAL" ]; then
+            FOCUS_PKG=$(dumpsys window 2>/dev/null | awk '/mCurrentFocus/ {gsub(/[{}]/,""); split($NF,a,"/"); print a[1]; exit}')
+            LAST_FOCUS_CHECK=$NOW
+        elif [ "$SCREEN_ON" -eq 0 ]; then
+            FOCUS_PKG="SLEEP"
         fi
-        if [ "$LAST_GPU_MIN" != "$GPU_MIN" ]; then
-            if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "$GPU_PATH/scaling_min_freq" "$GPU_MIN"
-            elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "$GPU_PATH/min_freq" "$GPU_MIN"; fi
-            LAST_GPU_MIN="$GPU_MIN"
+
+        case "$FOCUS_PKG" in
+            *camera*|*imaging*|*gallery*|*snapchat*|*instagram*|*tiktok*) PROF="SUSTAIN" ;;
+            *youtube*|*netflix*|*vlc*|*player*|*hulu*|*disney*|*prime*) PROF="SUSTAIN" ;;
+            *launcher*|*sec.android.app.launcher*|*trebuchet*|*systemui*) PROF="SUSTAIN" ;;
+            *unity*|*unreal*|*benchmark*|*antutu*|*geekbench*|*3dmark*|*passmark*|*cpuid*) PROF="BURST" ;;
+            *gameloft*|*rockstar*|*ea.game*|*activision*|*ubisoft*|*nexon*|*netmarble*|*netease*) PROF="BURST" ;;
+            *genshin*|*mihoyo*|*hoyoverse*|*pubg*|*codm*|*roblox*|*tencent*|*epicgames*) PROF="BURST" ;;
+            *supercell*|*mojang*|*minecraft*|*niantic*|*bandainamco*|*konami*|*squareenix*) PROF="BURST" ;;
+            *feral*|*madfinger*|*wargaming*|*kurogame*|*levelinfinite*|*playrix*|*lilith*|*kakaogames*) PROF="BURST" ;;
+            *recent*|*taskmanager*) PROF="BURST" ;;
+            SLEEP) PROF="SLEEP" ;;
+            *) PROF="NORMAL" ;;
+        esac
+
+        total_temp=0 ; weight=0
+        for item in $TZ_CACHE; do
+            path="${item%:*}" ; w="${item#*:}"
+            read -r raw_t < "$path" 2>/dev/null
+            [ -z "$raw_t" ] && continue
+            TEMP=$raw_t
+            if [ "$TEMP" -gt 1000 ]; then TEMP=$((TEMP / 1000))
+            elif [ "$TEMP" -gt 200 ]; then TEMP=$((TEMP / 10)); fi
+            total_temp=$((total_temp + TEMP * w))
+            weight=$((weight + w))
+        done
+        [ "$weight" -eq 0 ] && SOC_TEMP=0 || SOC_TEMP=$((total_temp / weight))
+
+        THERMAL_VELOCITY=0
+        if [ "$LAST_TEMP" -gt 0 ]; then
+            THERMAL_VELOCITY=$((SOC_TEMP - LAST_TEMP))
         fi
-    fi
+        LAST_TEMP=$SOC_TEMP
 
-    [ "$LAST_P0_MAX" != "$P0_MAX" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq" "$P0_MAX" ; LAST_P0_MAX="$P0_MAX"; }
-    [ "$LAST_P4_MAX" != "$P4_MAX" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq" "$P4_MAX" ; LAST_P4_MAX="$P4_MAX"; }
-    [ "$LAST_P6_MAX" != "$P6_MAX" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy6/scaling_max_freq" "$P6_MAX" ; LAST_P6_MAX="$P6_MAX"; }
-    
-    [ "$LAST_P0_MIN" != "$P0_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq" "$P0_MIN" ; LAST_P0_MIN="$P0_MIN"; }
-    [ "$LAST_P4_MIN" != "$P4_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq" "$P4_MIN" ; LAST_P4_MIN="$P4_MIN"; }
-    [ "$LAST_P6_MIN" != "$P6_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq" "$P6_MIN" ; LAST_P6_MIN="$P6_MIN"; }
-}
-
-> "$LOG_BUF"
-
-while true; do
-    read -r uptime _ < /proc/uptime
-    NOW="${uptime%.*}"
-
-    if check_touch_state; then
-        INPUT_GRACE_UNTIL=$((NOW + 3))
-    fi
-    
-    if [ -s "$METRICS_FILE" ] && IFS='|' read -r SEQ TEMP SCREEN_IS_ON BRIGHTNESS_PCT GPU_FREQ GPU_LOAD C PROF CPU_USAGE IO_STALL MEM_STALL CRC_IN < "$METRICS_FILE" 2>/dev/null; then
-        if [ -n "$SEQ" ] && [ "$SEQ" -gt "$LAST_OK_SEQ" ]; then
-            CALC_CRC=$((SEQ + TEMP*3 + GPU_FREQ*7 + CPU_USAGE*11))
-            if [ "$CRC_IN" -eq "$CALC_CRC" ]; then
-                LAST_OK_SEQ="$SEQ"
-                LAST_SEQ="$SEQ"
-
-                REASON="BASELINE_IDLE"
-
-                if [ "$SCREEN_IS_ON" -eq 1 ] && [ "$LAST_SCREEN_IS_ON" -eq 0 ]; then
-                    FORCE_NORMAL_AT=0
-                    MODEX=1 ; REASON="WAKE_UP_EVENT"
-                    LAST_CANDIDATE=1 ; CANDIDATE_COUNT=$HYSTERESIS_TICKS ; LAST_SCREEN_IS_ON=1
-                elif [ "$SCREEN_IS_ON" -eq 0 ]; then
-                    if [ "$LAST_SCREEN_IS_ON" -eq 1 ]; then
-                        FORCE_NORMAL_AT=$((NOW + 12))
-                    fi
-                    if [ "$FORCE_NORMAL_AT" -gt 0 ] && [ "$NOW" -gt "$FORCE_NORMAL_AT" ]; then
-                        MODEX=1
-                        REASON="FORCE_RECOVERY_IDLE"
-                        CANDIDATE_COUNT=$HYSTERESIS_TICKS
-                    else
-                        MODEX=1 ; REASON="SCREEN_OFF"
-                        LAST_CANDIDATE=1 ; CANDIDATE_COUNT=$HYSTERESIS_TICKS
-                    fi
-                    LAST_SCREEN_IS_ON=0
-                else
-                    LAST_SCREEN_IS_ON="$SCREEN_IS_ON"
-                    LAST_FAST_T=$FAST_T
-                    
-                    if [ "$TEMP" -gt "$FAST_T" ]; then 
-                        FAST_T=$(( (FAST_T * 8 + TEMP * 2) / 10 )) 
-                    else 
-                        FAST_T=$(( (FAST_T * 9 + TEMP * 1) / 10 )) 
-                    fi
-                    DELTA=$((FAST_T - LAST_FAST_T))
-
-                    CHG_OFFSET=0 ; [ "$C" -eq 1 ] && CHG_OFFSET=3
-                    CRIT_LIMIT=$((68 + CHG_OFFSET))
-                    HOT_LIMIT=$((61 + CHG_OFFSET))
-
-                    if [ "$FAST_T" -ge "$CRIT_LIMIT" ]; then TH_STATE="CRIT"
-                    elif [ "$FAST_T" -ge "$HOT_LIMIT" ]; then TH_STATE="HOT"
-                    elif [ "$FAST_T" -ge $((HOT_LIMIT - 4)) ]; then TH_STATE="WARM"
-                    else TH_STATE="NORMAL"; fi
-                    
-                    TMP_TH="${THERM_STATE_FILE}.$$.tmp"
-                    echo "$TH_STATE" > "$TMP_TH"
-                    mv -f "$TMP_TH" "$THERM_STATE_FILE" 2>/dev/null
-
-                    [ "$FAST_T" -ge "$CRIT_LIMIT" ] && THERMAL_SCORE=$((THERMAL_SCORE + 1)) || THERMAL_SCORE=0
-
-                    case "$PROF" in
-                        BURST) 
-                            if [ "$FAST_T" -ge "$BURST_HEADROOM" ]; then MODEX=2 ; REASON="BURST_THERMAL_CAP"
-                            else MODEX=3 ; REASON="APP_PROFILE_BURST" ; fi ;;
-                        SUSTAIN) MODEX=2 ; REASON="APP_PROFILE_SUSTAIN" ;; 
-                        NORMAL)  MODEX=1 ; REASON="IDLE_APP_PROFILE" ;; 
-                    esac
-
-                    OVERRIDE_ACTIVE=0
-                    if [ "$MODEX" -eq 1 ]; then
-                        if [ "$CPU_USAGE" -ge 80 ]; then MODEX=3 ; REASON="HIGH_CPU_LOAD ($CPU_USAGE%)"; OVERRIDE_ACTIVE=1
-                        elif [ "$GPU_LOAD" -ge 80 ]; then MODEX=3 ; REASON="HIGH_GPU_LOAD ($GPU_LOAD%)"; OVERRIDE_ACTIVE=1
-                        elif [ "$IO_STALL" -eq 1 ]; then MODEX=2 ; REASON="IO_STALL_DETECTED"; OVERRIDE_ACTIVE=1
-                        elif [ "$MEM_STALL" -eq 1 ]; then MODEX=2 ; REASON="MEMORY_PSI_PRESSURE"; OVERRIDE_ACTIVE=1
-                        elif [ "$CPU_USAGE" -ge 50 ]; then MODEX=2 ; REASON="MODERATE_CPU_LOAD ($CPU_USAGE%)"; OVERRIDE_ACTIVE=1
-                        fi
-                    fi
-
-                    if [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ] && [ "$FAST_T" -lt 63 ]; then
-                        if [ "$MODEX" -lt 2 ]; then
-                            MODEX=2 ; REASON="TOUCH_INTERACTION_SUSTAIN"
-                            OVERRIDE_ACTIVE=1
-                        fi
-                    fi
-
-                    if [ "$OVERRIDE_ACTIVE" -eq 1 ]; then
-                        LAST_CANDIDATE="$MODEX"
-                        CANDIDATE_COUNT=$HYSTERESIS_TICKS
-                    fi
-                    
-                    BURST_RETENTION=10
-                    [ "$IO_STALL" -eq 1 ] && BURST_RETENTION=0 
-
-                    if [ "$LAST_MODE" -eq 3 ] && [ $((NOW - LAST_BURST_ENTER)) -lt "$BURST_RETENTION" ] && [ "$MODEX" -lt 4 ]; then
-                        MODEX=3 ; REASON="BURST_MIN_RETENTION_LOCK"
-                    fi
-
-                    if [ "$THERMAL_SCORE" -ge 3 ]; then
-                        THERM_HOLD_UNTIL=$((NOW + 45))
-                        THERMAL_LOCK_UNTIL=$((NOW + 30))
-                        RECOVERY_WINDOW=$(( (FAST_T - HOT_LIMIT) * 8 ))
-                        [ "$RECOVERY_WINDOW" -lt 15 ] && RECOVERY_WINDOW=15
-                        [ "$RECOVERY_WINDOW" -gt 60 ] && RECOVERY_WINDOW=60
-                        POST_THERM_RECOVERY_UNTIL=$((NOW + RECOVERY_WINDOW))
-                        MODEX=4 ; REASON="CRITICAL_THERM_SCORE_3"
-                    elif [ "$NOW" -lt "$THERM_HOLD_UNTIL" ]; then 
-                        MODEX=4 ; REASON="THERMAL_HOLD_ACTIVE"
-                    elif [ "$DELTA" -ge 3 ] && [ "$FAST_T" -ge $((HOT_LIMIT - 3)) ]; then 
-                        MODEX=2 ; REASON="TEMP_RISING_FAST"
-                    fi
-
-                    if [ "$MODEX" -eq 3 ] && [ "$NOW" -lt "$THERMAL_LOCK_UNTIL" ]; then
-                        MODEX=2 ; REASON="THERMAL_LOCKOUT_COOLDOWN"
-                    fi
-                fi
-
-                [ "$MODEX" -eq 3 ] && [ "$LAST_MODE" -ne 3 ] && LAST_BURST_ENTER=$NOW
-                if [ "$NOW" -lt "$POST_THERM_RECOVERY_UNTIL" ] && [ "$MODEX" -eq 3 ]; then
-                    MODEX=2 ; REASON="POST_THERMAL_RECOVERY"
-                fi
-                
-                [ "$MODEX" -lt "$LAST_MODE" ] && LAST_DOWNGRADE=$NOW
-                if [ "$MODEX" -gt "$LAST_MODE" ] && [ $((NOW - LAST_DOWNGRADE)) -lt "$MODE_DOWNGRADE_LOCK" ]; then
-                    MODEX="$LAST_MODE" ; REASON="DOWNGRADE_LOCKOUT"
-                fi
-
-                if [ "$MODEX" -eq "$LAST_CANDIDATE" ]; then CANDIDATE_COUNT=$((CANDIDATE_COUNT + 1))
-                else LAST_CANDIDATE="$MODEX" ; CANDIDATE_COUNT=0; fi
-
-                [ "$MODEX" -eq 4 ] && CANDIDATE_COUNT=$HYSTERESIS_TICKS
-                if [ "$CANDIDATE_COUNT" -lt "$HYSTERESIS_TICKS" ]; then
-                    MODEX="$LAST_MODE" ; REASON="AWAITING_HYSTERESIS"
-                fi
-
-                DYN_COOLDOWN=6
-                if [ "$LAST_MODE" -eq 1 ] && [ "$MODEX" -eq 2 ]; then DYN_COOLDOWN=6; fi
-                if [ "$LAST_MODE" -eq 2 ] && [ "$MODEX" -eq 3 ]; then DYN_COOLDOWN=12; fi
-                if [ "$LAST_MODE" -eq 3 ] && [ "$MODEX" -eq 2 ]; then DYN_COOLDOWN=15; fi
-
-                if [ "$MODEX" -ne 4 ] && [ "$MODEX" -ne "$LAST_MODE" ]; then
-                    if [ $((NOW - LAST_FREQ_COMMIT)) -lt "$DYN_COOLDOWN" ]; then
-                        MODEX="$LAST_MODE" ; REASON="AWAITING_COOLDOWN"
-                    fi
-                fi
-                
-                if [ "$MODEX" -eq 1 ] && [ "$FAST_T" -ge "$NORMAL_UNLOCK_TEMP" ]; then
-                    MODEX=2 ; REASON="NORMAL_THERMAL_LOCKOUT"
-                fi
-
-                if [ "$MODEX" -ne "$LAST_MODE" ]; then
-                    apply_profile "$MODEX" 
-                    [ "$LAST_MODE" != "$MODEX" ] && { echo "$MODEX" > "$KERNEL_MODE" 2>/dev/null; }
-                    
-                    LAST_FREQ_COMMIT=$NOW 
-                    echo "$(get_clean_timestamp) | C=$MODEX | T=$FAST_T | IO=$IO_STALL | CPU=$CPU_USAGE | APP=$PROF" >> "$LOG_BUF"
-                    
-                    LOG_COUNT=$((LOG_COUNT + 1))
-                    if [ "$LOG_COUNT" -ge 3 ]; then
-                        cat "$LOG_BUF" >> "$KERNEL_LOG"
-                        > "$LOG_BUF"
-                        LOG_COUNT=0
-                    fi
-                    LAST_MODE="$MODEX"
-                fi
-
-                if [ "$LAST_MODE" -ne 4 ]; then
-                    ACTIVE_P6_MIN="$LAST_P6_MIN"
-                    if [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ]; then
-                        ACTIVE_P6_MIN=1144000
-                    else
-                        case "$LAST_MODE" in
-                            1) ACTIVE_P6_MIN=400000 ;;
-                            2) ACTIVE_P6_MIN=546000 ;;
-                            3) ACTIVE_P6_MIN=806000 ;;
-                        esac
-                    fi
-                    [ "$LAST_P6_MIN" != "$ACTIVE_P6_MIN" ] && { safe_write "/sys/devices/system/cpu/cpufreq/policy6/scaling_min_freq" "$ACTIVE_P6_MIN" ; LAST_P6_MIN="$ACTIVE_P6_MIN"; }
-                fi
-                
-                TOUCH_LIVE=0
-                [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ] && TOUCH_LIVE=1
-                echo "${REASON}|${FAST_T}|${TOUCH_LIVE}" > "${METRICS_FILE}.reason" 2>/dev/null
+        read -r cpu u n s id io irq sirq steal guest guest_nice < /proc/stat
+        total=$((u + n + s + id + io + irq + sirq + steal + guest + guest_nice))
+        idle=$((id + io))
+        diff_total=$((total - LAST_TOTAL))
+        if [ "$diff_total" -gt 0 ]; then
+            RAW_USAGE=$(( (diff_total - (idle - LAST_IDLE)) * 100 / diff_total ))
+            [ "$RAW_USAGE" -lt 0 ] && RAW_USAGE=0
+            [ "$RAW_USAGE" -gt 100 ] && RAW_USAGE=100
+            
+            EMA_SAMPLES=$((EMA_SAMPLES + 1))
+            if [ "$EMA_SAMPLES" -lt 8 ]; then
+                CPU_FAST=$RAW_USAGE
+                CPU_SLOW=$RAW_USAGE
+                EMA_READY=0
+            else
+                EMA_READY=1
+                CPU_FAST=$(( (CPU_FAST * 5 + RAW_USAGE * 5) / 10 ))
+                CPU_SLOW=$(( (CPU_SLOW * 8 + RAW_USAGE * 2) / 10 ))
             fi
         fi
-    fi
+        LAST_TOTAL=$total
+        LAST_IDLE=$idle
 
-    if [ "$NOW" -lt "${THERMAL_LOCK_UNTIL:-0}" ]; then
-        usleep 1000000 2>/dev/null || sleep 1
-    elif [ "${LAST_MODE:-1}" -ge 2 ]; then
-        usleep 500000 2>/dev/null || sleep 0.5
-    else
-        usleep 2000000 2>/dev/null || sleep 2
-    fi
-done
-EOF
-    chmod 755 "$DISPATCHER_SCRIPT"
-
-    # ======================================================================
-    # [ (🔴) COMPONENT 3: WATCHDOG SUPERVISOR ]
-    # ======================================================================
-    cat > "$SUPERVISOR_SCRIPT" << 'EOF'
-#!/system/bin/sh
-IPC_DIR="/dev/zenith_ipc"
-LOG_BUF="$IPC_DIR/log.buf"
-KERNEL_LOG="/data/local/tmp/zenith_kernel.log"
-
-sync_log_buffer() {
-    if [ -f "$LOG_BUF" ]; then
-        mv "$LOG_BUF" "${LOG_BUF}.sync" 2>/dev/null
-        cat "${LOG_BUF}.sync" >> "$KERNEL_LOG" 2>/dev/null
-        rm -f "${LOG_BUF}.sync"
-    fi
-}
-
-trap 'sync_log_buffer; rm -f /data/local/tmp/zenith_supervisor.pid' EXIT INT TERM
-echo $$ > "/data/local/tmp/zenith_supervisor.pid"
-exec 2>> /data/local/tmp/zenith_supervisor.err
-
-get_now() {
-    read -r uptime _ < /proc/uptime
-    echo "${uptime%.*}"
-}
-
-E_SCR="/data/local/tmp/zenith_engine.sh" 
-D_SCR="/data/local/tmp/zenith_dispatcher.sh"
-
-spawn_single_daemon() {
-    local script="$1"
-    local local_pidf="${script%.sh}.pid"
-    rm -f "$local_pidf"
-    sh "$script" >/dev/null 2>&1 &
-    sleep 1 
-}
-
-MAX_CRASH=10
-CRASH_E=0
-CRASH_D=0
-RESTART_DELAY=1
-read -r uptime _ < /proc/uptime
-STARTUP_TIME="${uptime%.*}"
-STARTUP_GRACE_UNTIL=$((STARTUP_TIME + 30))
-
-while true; do
-    read -r uptime _ < /proc/uptime
-    NOW="${uptime%.*}"
-    
-    if [ "$NOW" -lt "$STARTUP_GRACE_UNTIL" ]; then sleep 10; continue; fi
-
-    CRASH_HAPPENED=0
-
-    is_alive_e=0
-    pidf_e="${E_SCR%.sh}.pid"
-    if [ -f "$pidf_e" ]; then
-        read -r pid < "$pidf_e" 2>/dev/null
-        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-            comm=$(tr -d '\0' < "/proc/$pid/cmdline" 2>/dev/null)
-            case "$comm" in *zenith_engine*) is_alive_e=1 ;; esac
-        fi
-    fi
-    if [ "$is_alive_e" -eq 0 ]; then 
-        spawn_single_daemon "$E_SCR"
-        CRASH_E=$((CRASH_E + 1))
-        CRASH_HAPPENED=1
-    else
-        [ "$CRASH_E" -gt 0 ] && CRASH_E=$((CRASH_E - 1))
-    fi
-
-    is_alive_d=0
-    pidf_d="${D_SCR%.sh}.pid"
-    if [ -f "$pidf_d" ]; then
-        read -r pid < "$pidf_d" 2>/dev/null
-        if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
-            comm=$(tr -d '\0' < "/proc/$pid/cmdline" 2>/dev/null)
-            case "$comm" in *zenith_dispatcher*) is_alive_d=1 ;; esac
-        fi
-    fi
-    if [ "$is_alive_d" -eq 0 ]; then 
-        spawn_single_daemon "$D_SCR"
-        CRASH_D=$((CRASH_D + 1))
-        CRASH_HAPPENED=1
-    else
-        [ "$CRASH_D" -gt 0 ] && CRASH_D=$((CRASH_D - 1))
-    fi
-
-    if [ "$CRASH_HAPPENED" -eq 1 ]; then
-        if [ "$CRASH_E" -gt "$MAX_CRASH" ] || [ "$CRASH_D" -gt "$MAX_CRASH" ]; then
-            echo "$(date) | CRITICAL: Watchdog failure cap exceeded (E:$CRASH_E D:$CRASH_D). Suspending." >> "/data/local/tmp/zenith_error.log"
-            exit 1
-        fi
-        sleep $RESTART_DELAY
-        RESTART_DELAY=$((RESTART_DELAY * 2))
-        [ "$RESTART_DELAY" -gt 32 ] && RESTART_DELAY=32
-    else
-        RESTART_DELAY=1 ; sleep 20
-    fi
-done
-EOF
-    chmod 755 "$SUPERVISOR_SCRIPT"
-
-    # --- [FIX 2] SINGLE ENTRYPOINT ---
-    sh "$SUPERVISOR_SCRIPT" >/dev/null 2>&1 &
-
-    echo -e "${Z_GREEN}Zenith FULL START complete.${NC}"
-    sleep 0.5
-}
-
-# ==============================================================================
-# MENU UTILITIES & DASHBOARD (REVAMPED ENGINEERING VIEW)
-# ==============================================================================
-view_turbo_pulse() {
-    LAST_TEMP="0"
-    LAST_GPU="0"
-
-    parse_metrics() {
-        [ ! -f "$METRICS_FILE" ] && return
+        RAW_STAT=0
+        for st in /sys/class/power_supply/*/status; do
+            [ -f "$st" ] || continue
+            read -r val < "$st" 2>/dev/null
+            case "$val" in
+                Charging*|Full*|charging*|full*) RAW_STAT=1 ; break ;;
+            esac
+        done
         
-        IFS='|' read -r SEQ TEMP CUR_SCREEN BRIGHTNESS_PCT GPU_FREQ GPU_LOAD CHARGING PROFILE CPU_USAGE IO_STALL MEM_STALL CRC_IN < "$METRICS_FILE" 2>/dev/null || return
-        
-        [ -z "$SEQ" ] && return
-        
-        # RAW values
-        SOC_TEMP="$TEMP"
-        SOC_GPU="$GPU_FREQ"
-
-        # Thermal smoothing csak UI-ra
-        if [ -n "$SOC_TEMP" ] && [ "$SOC_TEMP" -gt 0 ]; then
-            LAST_TEMP="$SOC_TEMP"
-        fi
-        TEMP="${LAST_TEMP:-0}"
-
-        if [ -n "$SOC_GPU" ] && [ "$SOC_GPU" -gt 0 ]; then
-            LAST_GPU="$SOC_GPU"
-        fi
-        GPU_FREQ="${LAST_GPU:-0}"
-        
-        MODE=1
-        [ -f "$KERNEL_MODE" ] && read -r MODE < "$KERNEL_MODE" 2>/dev/null
-        THERMAL="NORMAL"
-        [ -f "$THERM_STATE_FILE" ] && read -r THERMAL < "$THERM_STATE_FILE" 2>/dev/null
-        
-        if [ -f "${METRICS_FILE}.reason" ]; then
-            IFS='|' read -r REASON FAST_T TOUCH_LIVE < "${METRICS_FILE}.reason" 2>/dev/null
+        if [ "$RAW_STAT" -eq 1 ]; then
+            CHARGE_TICK=$((CHARGE_TICK + 1))
+            [ "$CHARGE_TICK" -ge 2 ] && STAT=1
         else
-            REASON="UNKNOWN"
-            FAST_T="$TEMP"
-            TOUCH_LIVE=0
+            CHARGE_TICK=0
+            STAT=0
+        fi
+
+        echo "$FRAME_ID|$SOC_TEMP|$STAT|$PROF|$CPU_FAST|$CPU_SLOW|$THERMAL_VELOCITY|$FOCUS_PKG|$SCREEN_ON|$EMA_READY" > "${METRICS_FILE}.tmp"
+        mv -f "${METRICS_FILE}.tmp" "$METRICS_FILE"
+
+        if [ "$SCREEN_ON" -eq 0 ]; then sleep 2; elif [ "$PROF" = "BURST" ]; then sleep 1; else sleep 2; fi
+    done
+}
+
+# ------------------------------------------------------------------------------
+# 3. DISPATCHER DAEMON (Anti-Stutter + 5-State Thermal + Boot Soft Burst)
+# ------------------------------------------------------------------------------
+dispatcher_daemon() {
+    safe_write() { [ -w "$2" ] && echo "$1" > "$2" 2>/dev/null ; }
+    
+    safe_cpu() {
+        local pol="$1" ; local c_id="${pol#policy}" ; local mx="$2" ; local mn="$3"
+        local online="1"
+        [ -f "/sys/devices/system/cpu/cpu${c_id}/online" ] && read -r online < "/sys/devices/system/cpu/cpu${c_id}/online" 2>/dev/null
+        if [ "$online" = "1" ]; then
+            [ -n "$mx" ] && safe_write "$mx" "/sys/devices/system/cpu/cpufreq/$pol/scaling_max_freq"
+            [ -n "$mn" ] && safe_write "$mn" "/sys/devices/system/cpu/cpufreq/$pol/scaling_min_freq"
         fi
     }
 
-    while true; do
-        hard_clear
-        parse_metrics
+    LAST_MODE=0; FAST_T=45; COOL_SCORE=0
+    LAST_P4_MAX=""; LAST_P6_MAX=""; LAST_P4_MIN=""; LAST_P6_MIN=""
+    LAST_GPU_MIN=""; LAST_GPU_MAX=""
+    LAST_CPUSET_STATE="NORMAL"; LAST_READAHEAD="128"
+    
+    INPUT_GRACE_UNTIL=0; UI_LOCK_UNTIL=0; PKG_BOOST_UNTIL=0; GAME_LOCK_UNTIL=0
+    LAST_FOCUS_PKG=""
+    HIGH_LOAD_COUNT=0
+    
+    BOOT_DONE=0; BOOT_BOOST_UNTIL=0
 
-        echo -e "${Z_CYAN}================================================${NC}"
-        echo -e "${Z_CYAN}       ZENITH EMULATION TELEMETRY        ${NC}"
-        echo -e "${Z_CYAN}================================================${NC}"
+    GPU_PATH=""
+    for g in /sys/class/devfreq/*11800000.mali* /sys/class/devfreq/*mali* /sys/kernel/gpu; do
+        if [ -f "$g/max_freq" ] || [ -f "$g/scaling_max_freq" ]; then GPU_PATH="$g"; break; fi
+    done
 
-        case "$REASON" in
-            *HYSTERESIS*|*COOLDOWN*) DISPLAY_REASON="Mode Stabilization" ;;
-            DOWNGRADE_LOCKOUT) DISPLAY_REASON="Downgrade Protection" ;;
-            TOUCH_INTERACTION_SUSTAIN) DISPLAY_REASON="User Interaction Boost" ;;
-            APP_PROFILE_BURST|BURST_MIN_RETENTION_LOCK) DISPLAY_REASON="Heavy Workload" ;;
-            APP_PROFILE_SUSTAIN) DISPLAY_REASON="Media / Sustained" ;;
-            HIGH_CPU_LOAD*) DISPLAY_REASON="CPU Saturation" ;;
-            MODERATE_CPU_LOAD*) DISPLAY_REASON="Moderate CPU Load" ;;
-            HIGH_GPU_LOAD*) DISPLAY_REASON="GPU Saturation" ;;
-            IO_STALL_DETECTED) DISPLAY_REASON="I/O Congestion" ;;
-            MEMORY_PSI_PRESSURE) DISPLAY_REASON="Memory Pressure" ;;
-            CRITICAL_THERM*) DISPLAY_REASON="Critical Thermal" ;;
-            THERMAL_LOCKOUT_COOLDOWN|THERMAL_HOLD_ACTIVE|POST_THERMAL_RECOVERY) DISPLAY_REASON="Thermal Lockout Window" ;;
-            TEMP_RISING_FAST) DISPLAY_REASON="Rapid Temp Rise" ;;
-            NORMAL_THERMAL_LOCKOUT) DISPLAY_REASON="Idle Lockout" ;;
-            IDLE_APP_PROFILE|BASELINE_IDLE|SCREEN_OFF|WAKE_UP_EVENT|FORCE_RECOVERY_IDLE) DISPLAY_REASON="System Baseline" ;;
-            *) DISPLAY_REASON="${REASON:-Unknown}" ;;
+    TRUE_GPU_MAX="702000000"
+    if [ -n "$GPU_PATH" ] && [ -f "$GPU_PATH/available_frequencies" ]; then
+        TRUE_GPU_MAX=$(awk '{print $NF}' "$GPU_PATH/available_frequencies")
+        [ -z "$TRUE_GPU_MAX" ] && TRUE_GPU_MAX="702000000"
+    fi
+
+    apply_unified_profile() {
+        local P0_MAX P4_MAX P6_MAX P0_MIN P4_MIN P6_MIN READAHEAD
+        local G_MIN G_MAX CACHE_PRES SWAP_VAL SCHED_BOOST
+        local IS_SCREEN_ON="$2"
+
+        case "$1" in
+            1) # NORMAL / IDLE / SLEEP
+               P0_MAX=1456000; P4_MAX=2028000; P6_MAX=2106000 
+               P0_MIN=300000;  P4_MIN=400000;  P6_MIN=546000
+               G_MIN=260000000; G_MAX=455000000 
+               READAHEAD=128; CACHE_PRES=80; SWAP_VAL=110; SCHED_BOOST=0 ;;
+               
+            2) # SUSTAIN / SCROLL / BOOT STABILIZATION
+               P0_MAX=1781000; P4_MAX=2216000; P6_MAX=2496000 
+               P0_MIN=400000;  P4_MIN=500000;  P6_MIN=832000
+               G_MIN=340000000; G_MAX=572000000 
+               READAHEAD=256; CACHE_PRES=70; SWAP_VAL=90; SCHED_BOOST=10 ;;
+
+            3) # BURST / GAME
+               P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2730000 
+               P0_MIN=500000;  P4_MIN=741000;  P6_MIN=1066000
+               G_MIN=572000000; G_MAX="$TRUE_GPU_MAX" 
+               READAHEAD=256; CACHE_PRES=50; SWAP_VAL=70; SCHED_BOOST=25 ;;
+
+            4) # SOFT THERMAL (fluid-safe)
+               P0_MAX=1200000; P4_MAX=1560000; P6_MAX=1781000 
+               P0_MIN=300000;  P4_MIN=400000;  P6_MIN=546000
+               G_MIN=260000000; G_MAX=455000000 
+               READAHEAD=128; CACHE_PRES=120; SWAP_VAL=120; SCHED_BOOST=5 ;;
+
+            5) # HARD THERMAL (critical lock)
+               P0_MAX=1000000; P4_MAX=1300000; P6_MAX=1560000 
+               P0_MIN=300000;  P4_MIN=400000;  P6_MIN=546000
+               G_MIN=260000000; G_MAX=340000000 
+               READAHEAD=128; CACHE_PRES=200; SWAP_VAL=150; SCHED_BOOST=0 ;;
+               
+            6) # BOOT SOFT BURST
+               P0_MAX=1704000; P4_MAX=2216000; P6_MAX=2496000 
+               P0_MIN=400000;  P4_MIN=650000;  P6_MIN=832000
+               G_MIN=340000000; G_MAX=572000000 
+               READAHEAD=256; CACHE_PRES=60; SWAP_VAL=90; SCHED_BOOST=15 ;;
         esac
 
-        MODE_TXT="UNKNOWN"
-        case "${MODE:-1}" in
-            1) MODE_TXT="${Z_GREEN}IDLE / NORMAL (1)${NC}" ;;
-            2) MODE_TXT="${Z_YELLOW}SUSTAIN (2)${NC}" ;;
-            3) MODE_TXT="${Z_ORANGE}BURST (3)${NC}" ;;
-            4) MODE_TXT="${Z_RED}THERMAL PROTECT (4)${NC}" ;;
-        esac
-
-        THERM_STR="${Z_GREEN}${THERMAL}${NC}"
-        case "$THERMAL" in
-            WARM) THERM_STR="${Z_YELLOW}${THERMAL}${NC}" ;;
-            HOT) THERM_STR="${Z_ORANGE}${THERMAL}${NC}" ;;
-            CRIT) THERM_STR="${Z_RED}${THERMAL}${NC}" ;;
-        esac
-
-        CHARGE_STR="${Z_ORANGE}BATTERY 🔋${NC}"
-        [ "$CHARGING" = "1" ] && CHARGE_STR="${Z_GREEN}CHARGING ⚡${NC}"
-
-        GPU_STR="${Z_RED}OFFLINE${NC}"
-        if [ "${GPU_FREQ:-0}" -gt 0 ] || [ "${GPU_LOAD:-0}" -gt 0 ]; then 
-            GPU_STR="${Z_CYAN}${GPU_FREQ:-0} MHz${NC} (${Z_WHITE}${GPU_LOAD:-0}%${NC})"
+        if [ "$1" -ne "$LAST_MODE" ]; then
+            safe_write "$CACHE_PRES" "/proc/sys/vm/vfs_cache_pressure"
+            safe_write "$SWAP_VAL" "/proc/sys/vm/swappiness"
         fi
 
-        local input_stat="${Z_RED}IDLE${NC}"
-        [ "$TOUCH_LIVE" = "1" ] && input_stat="${Z_GREEN}LIVE${NC}"
+        if [ "$IS_SCREEN_ON" -eq 1 ]; then
+            if [ "$1" -ge 4 ] && [ "$LAST_CPUSET_STATE" != "RESTRICTED" ]; then
+                safe_write "0-6" "/dev/cpuset/top-app/cpus"
+                LAST_CPUSET_STATE="RESTRICTED"
+            elif [ "$1" -lt 4 ] && [ "$LAST_CPUSET_STATE" != "NORMAL" ]; then
+                safe_write "0-7" "/dev/cpuset/top-app/cpus"
+                LAST_CPUSET_STATE="NORMAL"
+            fi
+            
+            safe_write "$SCHED_BOOST" "/dev/stune/top-app/schedtune.boost"
+        fi
 
-        TEMP_DISPLAY="${TEMP:---}"
-        FAST_DISPLAY="${FAST_T:---}"
-        [ "$TEMP_DISPLAY" = "0" ] && TEMP_DISPLAY="--"
-        [ "$FAST_DISPLAY" = "0" ] && FAST_DISPLAY="--"
+        if [ "$READAHEAD" != "$LAST_READAHEAD" ]; then
+            for disk in /sys/block/sda/queue/read_ahead_kb /sys/block/mmcblk0/queue/read_ahead_kb; do
+                [ -w "$disk" ] && echo "$READAHEAD" > "$disk" 2>/dev/null
+            done
+            LAST_READAHEAD="$READAHEAD"
+        fi
 
-        echo
-        printf " %-14s : %b\n" "SOC Temp" "${Z_YELLOW}${TEMP_DISPLAY}°C${NC} ${Z_PURPLE}(EMA: ${FAST_DISPLAY}°C)${NC}"
-        printf " %-14s : %b\n" "Thermal State" "$THERM_STR"
-        printf " %-14s : %b\n" "Power Source" "$CHARGE_STR"
-        printf " %-14s : %b\n" "Input Status" "$input_stat"
+        if [ -n "$GPU_PATH" ] && [ "$IS_SCREEN_ON" -eq 1 ]; then
+            if [ -f "$GPU_PATH/scaling_max_freq" ]; then safe_write "$G_MAX" "$GPU_PATH/scaling_max_freq"
+            elif [ -f "$GPU_PATH/max_freq" ]; then safe_write "$G_MAX" "$GPU_PATH/max_freq"; fi
+            
+            if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "$G_MIN" "$GPU_PATH/scaling_min_freq"
+            elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "$G_MIN" "$GPU_PATH/min_freq"; fi
+            LAST_GPU_MIN="$G_MIN"; LAST_GPU_MAX="$G_MAX"
+        fi
 
-        echo -e "${Z_CYAN}------------------------------------------------${NC}"
-        printf " %-14s : %b\n" "Gov Mode" "$MODE_TXT"
-        printf " %-14s : %b\n" "Active Reason" "${Z_PURPLE}${DISPLAY_REASON}${NC}"
-        printf " %-14s : %b\n" "App Profile" "${Z_CYAN}${PROFILE:-NORMAL}${NC}"
+        safe_write "$P0_MAX" "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+        safe_write "$P0_MIN" "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
 
-        echo -e "${Z_CYAN}------------------------------------------------${NC}"
-        printf " %-14s : %b\n" "CPU Load" "${Z_PURPLE}${CPU_USAGE:-0}%${NC}"
-        printf " %-14s : %b\n" "GPU State" "$GPU_STR"
+        if [ "$LAST_P4_MAX" != "$P4_MAX" ] || [ "$LAST_P4_MIN" != "$P4_MIN" ]; then
+            safe_cpu "policy4" "$P4_MAX" "$P4_MIN"
+            LAST_P4_MAX="$P4_MAX" ; LAST_P4_MIN="$P4_MIN"
+        fi
         
-        echo -e "${Z_CYAN}================================================${NC}"
+        if [ "$LAST_P6_MAX" != "$P6_MAX" ] || [ "$LAST_P6_MIN" != "$P6_MIN" ]; then
+            safe_cpu "policy6" "$P6_MAX" "$P6_MIN"
+            LAST_P6_MAX="$P6_MAX" ; LAST_P6_MIN="$P6_MIN"
+        fi
 
-        echo
-    echo -e "\n  ${YELLOW}[ANY KEY]${GRAY} REFRESH          ${YELLOW}[ENTER]${GRAY} EXIT ${NC}\033[K"
+        LAST_BASELINE_P6_MIN="$P6_MIN" 
+    }
+
+    while [ ! -f "$STOP_FLAG" ]; do
+        NOW=$(date +%s)
+        UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 9999)
         
-        local refresh_trigger="x"
-        read -s -n 1 refresh_trigger 2>/dev/null
-        if [ -z "$refresh_trigger" ]; then
-            break
+        if [ "$BOOT_DONE" -eq 0 ]; then
+            if [ "$(getprop init.svc.bootanim 2>/dev/null)" = "stopped" ]; then
+                BOOT_DONE=1
+                BOOT_BOOST_UNTIL=$((NOW + 60))
+            fi
+        fi
+
+        if [ -s "$METRICS_FILE" ]; then
+            IFS='|' read -r FRAME_ID TEMP STAT PROF CPU_FAST CPU_SLOW THERMAL_VELOCITY FOCUS_PKG SCREEN_ON EMA_READY < "$METRICS_FILE" 2>/dev/null
+            
+            # Boot Thermal Ignorance (Első 60mp alatt fix 45°C)
+            if [ "$UPTIME" -lt 60 ]; then
+                FAST_T=45
+            else
+                FAST_T=$(( (FAST_T * 9 + TEMP * 1) / 10 ))
+            fi
+
+            if [ "${SCREEN_ON:-1}" -eq 0 ]; then
+                MODEX=1; REASON="DEEP_SLEEP_LOCK"
+                TOUCH_ACTIVE=0; MICRO_BURST=0
+                HIGH_LOAD_COUNT=0
+                
+                safe_write "0" "/dev/stune/top-app/schedtune.boost"
+                if [ -n "$GPU_PATH" ]; then
+                    if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "260000000" "$GPU_PATH/scaling_min_freq"
+                    elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "260000000" "$GPU_PATH/min_freq"; fi
+                    LAST_GPU_MIN="260000000"
+                fi
+
+                INPUT_GRACE_UNTIL=0; UI_LOCK_UNTIL=0; PKG_BOOST_UNTIL=0; GAME_LOCK_UNTIL=0
+                
+                if [ "$MODEX" -ne "$LAST_MODE" ]; then
+                    apply_unified_profile "$MODEX" "$SCREEN_ON"
+                    LAST_MODE="$MODEX"
+                fi
+                
+                if [ -f "/data/local/tmp/zenith/telemetry.flag" ]; then
+                    echo "$FRAME_ID|$MODEX|$PROF|$FAST_T|$LAST_P4_MIN|$LAST_P4_MAX|$LAST_P6_MIN|$LAST_P6_MAX|$STAT|0|$REASON|$CPU_FAST|$LAST_READAHEAD|0" > "${TELEMETRY_FILE}.tmp"
+                    mv -f "${TELEMETRY_FILE}.tmp" "$TELEMETRY_FILE"
+                fi
+                
+                sleep 2 
+                continue
+            fi
+
+            if [ "${THERMAL_VELOCITY:-0}" -le -2 ]; then COOL_SCORE=$((COOL_SCORE + 2))
+            elif [ "${THERMAL_VELOCITY:-0}" -le -1 ]; then COOL_SCORE=$((COOL_SCORE + 1))
+            else COOL_SCORE=$((COOL_SCORE - 1)); fi
+            [ "$COOL_SCORE" -lt 0 ] && COOL_SCORE=0
+            [ "$COOL_SCORE" -gt 20 ] && COOL_SCORE=20
+
+            TOUCH_ACTIVE=0
+            MICRO_BURST=0
+            if [ "$SCREEN_ON" -eq 1 ]; then
+                TOUCH_TS=$(cat "$TOUCH_STATE" 2>/dev/null)
+                if [ -n "$TOUCH_TS" ] && [ $((NOW - TOUCH_TS)) -le 1 ]; then
+                    if [ "$LAST_MODE" -eq 1 ]; then MICRO_BURST=1; fi
+                    TOUCH_ACTIVE=1
+                    INPUT_GRACE_UNTIL=$((NOW + 2)) 
+                    UI_LOCK_UNTIL=$((NOW + 1))
+                    
+                    if [ "$LAST_MODE" -ge 4 ] && [ "$FAST_T" -lt 70 ]; then
+                        COOL_SCORE=$((COOL_SCORE + 1))
+                        [ "$COOL_SCORE" -gt 20 ] && COOL_SCORE=20
+                    fi
+                fi
+            fi
+            
+            [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ] && TOUCH_ACTIVE=1
+
+            if [ "$CPU_FAST" -gt 65 ]; then
+                HIGH_LOAD_COUNT=$((HIGH_LOAD_COUNT + 1))
+            else
+                HIGH_LOAD_COUNT=0
+            fi
+
+            if [ "$PROF" = "BURST" ]; then
+                GAME_LOCK_UNTIL=$((NOW + 8))
+            fi
+
+            if [ "$SCREEN_ON" -eq 1 ]; then
+                if [ "$FOCUS_PKG" != "$LAST_FOCUS_PKG" ] && [ -n "$LAST_FOCUS_PKG" ] && [ "$LAST_FOCUS_PKG" != "NORMAL" ]; then
+                    PKG_BOOST_UNTIL=$((NOW + 3))
+                fi
+            fi
+            LAST_FOCUS_PKG="$FOCUS_PKG"
+
+            # 1. Base Target Selection
+            TARGET_MODE=1
+            REASON="IDLE_APP_PROFILE"
+
+            if [ "$BOOT_DONE" -eq 0 ] || [ "$NOW" -lt "$BOOT_BOOST_UNTIL" ]; then
+                TARGET_MODE=6 ; REASON="BOOT_SOFT_BURST"
+            elif [ "$UPTIME" -lt 180 ]; then
+                TARGET_MODE=2 ; REASON="BOOT_STABILIZATION" # Grace boot szakasz
+            elif [ "${EMA_READY:-0}" -eq 0 ]; then
+                TARGET_MODE=2 ; REASON="EMA_WARMUP"
+            elif [ "$NOW" -lt "$GAME_LOCK_UNTIL" ]; then
+                TARGET_MODE=3 ; REASON="GAME_PROFILE_LOCK"
+            elif [ "$NOW" -lt "$PKG_BOOST_UNTIL" ]; then
+                TARGET_MODE=3 ; REASON="UNIVERSAL_LAUNCH_BOOST"
+            elif [ "$HIGH_LOAD_COUNT" -ge 3 ]; then
+                TARGET_MODE=3 ; REASON="SUSTAINED_CPU_LOAD"
+            else
+                case "$PROF" in
+                    BURST) TARGET_MODE=3 ; REASON="APP_PROFILE_BURST" ;;
+                    SUSTAIN) TARGET_MODE=2 ; REASON="APP_PROFILE_SUSTAIN" ;; 
+                esac
+            fi
+
+            if [ "$NOW" -lt "$UI_LOCK_UNTIL" ] && [ "$TARGET_MODE" -lt 2 ]; then
+                if [ "$MICRO_BURST" -eq 1 ]; then TARGET_MODE=3 ; REASON="UI_MICRO_BURST"
+                else TARGET_MODE=2 ; REASON="UI_ANIMATION_LOCK" ; fi
+            fi
+
+            # 2. Thermal Overrides
+            CHG_OFFSET=0 ; [ "$STAT" -eq 1 ] && CHG_OFFSET=3
+            SOFT_LIMIT=$((70 + CHG_OFFSET))
+            HARD_LIMIT=$((75 + CHG_OFFSET))
+
+            if [ "$LAST_MODE" -eq 5 ]; then
+                if [ "$FAST_T" -le $((SOFT_LIMIT + 1)) ] && [ "$COOL_SCORE" -ge 6 ] && [ "$CPU_SLOW" -lt 55 ]; then
+                    MODEX=4; REASON="AI_THERMAL_RECOVERY"
+                else
+                    MODEX=5; REASON="HARD_THERMAL_LOCK"
+                fi
+            elif [ "$LAST_MODE" -eq 4 ]; then
+                if [ "$FAST_T" -ge "$HARD_LIMIT" ]; then
+                    MODEX=5; REASON="HARD_THERMAL_ESCALATE"
+                elif [ "$FAST_T" -le $((SOFT_LIMIT - 3)) ] && [ "$COOL_SCORE" -ge 6 ] && [ "$CPU_SLOW" -lt 75 ]; then
+                    MODEX="$TARGET_MODE"; REASON="AI_RECOVERY_SUSTAIN"
+                    [ "$MODEX" -eq 3 ] && REASON="AI_RECOVERY_BURST"
+                    [ "$MODEX" -eq 6 ] && REASON="AI_RECOVERY_BOOT_BURST"
+                else
+                    MODEX=4; REASON="SOFT_THERMAL_LOCK"
+                fi
+            else
+                if [ "$FAST_T" -ge "$HARD_LIMIT" ]; then MODEX=5; REASON="CRITICAL_HARD_THERMAL"
+                elif [ "$FAST_T" -ge "$SOFT_LIMIT" ]; then MODEX=4; REASON="SOFT_THERMAL"
+                else MODEX="$TARGET_MODE"; fi
+            fi
+
+            if [ "$MODEX" -ne "$LAST_MODE" ]; then
+                apply_unified_profile "$MODEX" "$SCREEN_ON"
+                LAST_MODE="$MODEX"
+            fi
+
+            ACTIVE_P6_MIN="$LAST_BASELINE_P6_MIN"
+            ACTIVE_GPU_MIN="$LAST_GPU_MIN"
+            TOUCH_LIVE_GUI=0
+            
+            if [ "$LAST_MODE" -lt 4 ] && [ "$SCREEN_ON" -eq 1 ]; then
+                if [ "$TOUCH_ACTIVE" -eq 1 ] || [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ]; then
+                    ACTIVE_P6_MIN=1066000 
+                    ACTIVE_GPU_MIN=455000000 
+                    TOUCH_LIVE_GUI=1
+                fi
+                if [ "$LAST_P6_MIN" != "$ACTIVE_P6_MIN" ]; then
+                    safe_cpu "policy6" "" "$ACTIVE_P6_MIN"
+                    LAST_P6_MIN="$ACTIVE_P6_MIN"
+                fi
+                
+                if [ -n "$GPU_PATH" ] && [ "$LAST_GPU_MIN" != "$ACTIVE_GPU_MIN" ]; then
+                    if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "$ACTIVE_GPU_MIN" "$GPU_PATH/scaling_min_freq"
+                    elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "$ACTIVE_GPU_MIN" "$GPU_PATH/min_freq"; fi
+                    LAST_GPU_MIN="$ACTIVE_GPU_MIN"
+                fi
+            fi
+
+            if [ -f "/data/local/tmp/zenith/telemetry.flag" ]; then
+                G_MHZ=$((ACTIVE_GPU_MIN / 1000000))
+                echo "$FRAME_ID|$MODEX|$PROF|$FAST_T|$LAST_P4_MIN|$LAST_P4_MAX|$LAST_P6_MIN|$LAST_P6_MAX|$STAT|$TOUCH_LIVE_GUI|$REASON|$CPU_FAST|$LAST_READAHEAD|$G_MHZ" > "${TELEMETRY_FILE}.tmp"
+                mv -f "${TELEMETRY_FILE}.tmp" "$TELEMETRY_FILE"
+            else
+                rm -f "$TELEMETRY_FILE" "${TELEMETRY_FILE}.tmp" 2>/dev/null
+            fi
+        fi
+
+        if [ "$SCREEN_ON" -eq 0 ]; then sleep 2
+        elif [ "$TOUCH_ACTIVE" -eq 1 ]; then sleep 0.15
+        elif [ "$MODEX" -eq 3 ] || [ "$MODEX" -eq 6 ]; then sleep 0.25
+        else sleep 1.0
         fi
     done
 }
 
+input_daemon &
+INPUT_PID=$!
+engine_daemon &
+ENGINE_PID=$!
+dispatcher_daemon &
+DISPATCHER_PID=$!
+
+while [ ! -f "$STOP_FLAG" ]; do sleep 2; done
+kill -9 $INPUT_PID $ENGINE_PID $DISPATCHER_PID 2>/dev/null
+EOF
+        chmod 755 "$BASE_DIR/zenith_daemon.sh"
+        sh "$BASE_DIR/zenith_daemon.sh" &
+        echo -e "${Z_GREEN}Governor engaged successfully.${NC}"
+        sleep 1
+    fi
+}
+
+# ==============================================================================
+# MVC VIEW: ZERO-FLICKER DASHBOARD (FAST MANUAL REFRESH)
+# ==============================================================================
+view_turbo_pulse() {
+    if [ ! -f "$TELEMETRY_FLAG" ]; then
+        hard_clear
+        echo -e "${Z_CYAN}====================================================${NC}"
+        echo -e " ${Z_RED}TELEMETRY DATA STREAM IS DISABLED!${NC}"
+        echo -e "${Z_CYAN}====================================================${NC}"
+        echo -e "\n ${Z_GRAY}The Zenith APEX governor is running in Zero-Overhead mode.${NC}"
+        echo -e " ${Z_GRAY}Visual data collection is currently paused to save CPU/IO.${NC}"
+        echo -e "\n ${Z_WHITE}Please enable Telemetry (Option 3) to view the dashboard.${NC}"
+        echo -e "\n ${Z_YELLOW}[ENTER]${Z_GRAY} to return...${NC}"
+        read -rsn1
+        return
+    fi
+
+    local key_press=""
+    local TELEMETRY_DIR="/dev/zenith"
+    [ ! -d "$TELEMETRY_DIR" ] && TELEMETRY_DIR="/data/local/tmp/zenith_shm"
+    local TELEMETRY_FILE="$TELEMETRY_DIR/telemetry.state"
+
+    while true; do
+        hard_clear
+
+        if [ ! -f "$TELEMETRY_FILE" ]; then
+            echo -e "${Z_RED}AWAITING TELEMETRY DATA... (Please Wait)${NC}"
+            echo -e "\n   ${Z_YELLOW}[ANY KEY]${Z_GRAY} REFRESH          ${Z_YELLOW}[ENTER]${Z_GRAY} EXIT ${NC}"
+            read -rsn1 key_press 2>/dev/null
+            if [ -z "$key_press" ]; then break; fi
+            continue
+        fi
+        
+        FILE_AGE=$(( $(date +%s) - $(stat -c %Y "$TELEMETRY_FILE" 2>/dev/null || echo 0) ))
+        if [ "$FILE_AGE" -gt 4 ]; then
+            echo -e "${Z_ORANGE}TELEMETRY STREAM STALLED. WAITING FOR UPDATE...${NC}"
+            echo -e "\n   ${Z_YELLOW}[ANY KEY]${Z_GRAY} REFRESH          ${Z_YELLOW}[ENTER]${Z_GRAY} EXIT ${NC}"
+            read -rsn1 key_press 2>/dev/null
+            if [ -z "$key_press" ]; then break; fi
+            continue
+        fi
+
+        IFS='|' read -r FRAME_ID MODE PROF FAST_T P4_MIN P4_MAX P6_MIN P6_MAX STAT TOUCH_LIVE REASON CPU_USAGE UFS_RA GPU_MIN < "$TELEMETRY_FILE" 2>/dev/null
+
+        if [ -z "$MODE" ] || [ -z "$P4_MIN" ]; then
+            echo -e "${Z_RED}READING DATA...${NC}"
+            sleep 0.1
+            continue
+        fi
+
+        local POWER_STR="${Z_ORANGE}BATTERY 🔋${NC}"
+        [ "${STAT:-0}" -gt 0 ] && POWER_STR="${Z_GREEN}CHARGING ⚡${NC}"
+
+        local MODE_TXT="UNKNOWN"
+        case "${MODE:-1}" in
+            1) MODE_TXT="${Z_GREEN}IDLE / SLEEP${NC}" ;;
+            2) MODE_TXT="${Z_YELLOW}SUSTAIN / GRACE${NC}" ;;
+            3) MODE_TXT="${Z_ORANGE}BURST${NC}" ;;
+            4) MODE_TXT="${Z_RED}SOFT THERMAL${NC}" ;;
+            5) MODE_TXT="${Z_RED}HARD THERMAL${NC}" ;;
+            6) MODE_TXT="${Z_CYAN}BOOT SOFT BURST${NC}" ;;
+        esac
+
+        local input_stat="${Z_RED}IDLE${NC}"
+        [ "${TOUCH_LIVE:-0}" -eq 1 ] && input_stat="${Z_GREEN}ACTIVE BOOST${NC}"
+
+        local mhz_p4_min=$((${P4_MIN:-0} / 1000))
+        local mhz_p4_max=$((${P4_MAX:-0} / 1000))
+        local mhz_p6_min=$((${P6_MIN:-0} / 1000))
+        local mhz_p6_max=$((${P6_MAX:-0} / 1000))
+        
+        local gpu_str="${Z_PURPLE}${GPU_MIN} MHz${NC}"
+        [ "${GPU_MIN:-0}" -eq 0 ] && gpu_str="${Z_GRAY}AUTO${NC}"
+
+        echo -e "${Z_CYAN}╔══════════════════════════════════════════════════════╗${NC}"
+        echo -e "${Z_CYAN}║${NC} ${Z_WHITE}             ZENITH APEX TELEMETRY                  ${NC} ${Z_CYAN}║${NC}"
+        echo -e "${Z_CYAN}╠══════════════════════════════════════════════════════╝${NC}"
+        
+        echo -e "${Z_CYAN}║${NC} ${Z_PURPLE}[ SYSTEM STATUS ]${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Power Source" "$POWER_STR"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Thermal Node" "${Z_YELLOW}${FAST_T:-40}°C${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "CPU Load EMA" "${Z_CYAN}${CPU_USAGE:-0}%${NC}"
+        
+        echo -e "${Z_CYAN}╟───────────────────────────────────────────────────────${NC}"
+        echo -e "${Z_CYAN}║${NC} ${Z_PURPLE}[ DISPATCHER LOGIC ]${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Active Mode" "$MODE_TXT"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Trigger Reason" "${Z_GRAY}${REASON:-UNKNOWN}${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Foreground App" "${Z_WHITE}${PROF:-NORMAL}${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Input Status" "$input_stat"
+        
+        echo -e "${Z_CYAN}╟───────────────────────────────────────────────────────${NC}"
+        echo -e "${Z_CYAN}║${NC} ${Z_PURPLE}[ HARDWARE TUNING ]${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Mid Core (P4)" "${Z_YELLOW}${mhz_p4_min} - ${mhz_p4_max} MHz${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Big Core (P6)" "${Z_CYAN}${mhz_p6_min} - ${mhz_p6_max} MHz${NC}"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "Mali GPU Min" "$gpu_str"
+        printf "${Z_CYAN}║${NC}  %-16s : %b\n" "I/O Readahead" "${Z_GREEN}${UFS_RA:-128} KB${NC}"
+        
+        echo -e "${Z_CYAN}╚═══════════════════════════════════════════════════════${NC}"
+        echo
+        echo -e "   ${Z_YELLOW}[ANY KEY]${Z_GRAY} REFRESH          ${Z_YELLOW}[ENTER]${Z_GRAY} EXIT ${NC}"
+        
+        read -rsn1 key_press 2>/dev/null
+        if [ -z "$key_press" ]; then
+            break 
+        fi
+        
+        while read -rsn1 -t 0.01 _extra_keys 2>/dev/null; do : ; done
+    done
+    hard_clear
+}
+
+# ==============================================================================
+#  OPTIMIZATION MODULE
+# ==============================================================================
 pm_optimization() {
-    local PURPLE='\033[38;5;141m' ; local GREEN='\033[38;5;46m'
-    local WHITE='\033[38;5;231m' ; local GRAY='\033[38;5;245m'
+    local PURPLE='\033[38;5;141m' ; local GREEN='\033[38;5;46m' ; local WHITE='\033[38;5;231m' ; local GRAY='\033[38;5;245m'
     local YELLOW='\033[38;5;226m' ; local BG='\033[48;2;14;1;28m' ; local NC='\033[0m'
     local WIDTH=58 ; local HEIGHT=19 ; local INNER_W=$((WIDTH - 2))
-    local TOP_BAR=$(printf '═%.0s' $(seq 1 $INNER_W))
-    local EMPTY_LINE=$(printf ' %.0s' $(seq 1 $INNER_W))
+    
+    local TOP_BAR="" idx=0
+    while [ $idx -lt "$INNER_W" ]; do TOP_BAR="${TOP_BAR}═" ; idx=$((idx+1)) ; done
+    local EMPTY_LINE="" idx=0
+    while [ $idx -lt "$INNER_W" ]; do EMPTY_LINE="${EMPTY_LINE} " ; idx=$((idx+1)) ; done
 
     draw_opt_frame() {
-        local border_col="$1" ; local main_txt="$2" ; local sub_txt="$3"
+        local border_col="$1" main_txt="$2" sub_txt="$3"
         local out="\033[H${border_col}╔${TOP_BAR}╗${NC}\r\n"
-        for y in $(seq 2 $((HEIGHT - 1))); do
+        local y=2
+        
+        while [ "$y" -lt "$HEIGHT" ]; do
             local line="$EMPTY_LINE"
             if [ "$y" -eq 9 ] && [ -n "$main_txt" ]; then
-                local text_len=${#main_txt} ; local start=$(( (INNER_W - text_len) / 2 ))
-                line="${EMPTY_LINE:0:$start}${WHITE}${BG}${main_txt}${BG}${EMPTY_LINE:$((start + text_len))}"
+                local text_len=${#main_txt}
+                local pad_left=$(( (INNER_W - text_len) / 2 ))
+                local pad_right=$(( INNER_W - pad_left - text_len ))
+                
+                local left_spaces="" tmp_i=0
+                while [ "$tmp_i" -lt "$pad_left" ]; do left_spaces="${left_spaces} " ; tmp_i=$((tmp_i+1)) ; done
+                local right_spaces="" tmp_i=0
+                while [ "$tmp_i" -lt "$pad_right" ]; do right_spaces="${right_spaces} " ; tmp_i=$((tmp_i+1)) ; done
+                
+                line="${left_spaces}${WHITE}${BG}${main_txt}${BG}${right_spaces}"
             fi
             if [ "$y" -eq 11 ] && [ -n "$sub_txt" ]; then
-                local text_len=${#sub_txt} ; local start=$(( (INNER_W - text_len) / 2 ))
-                line="${EMPTY_LINE:0:$start}${GRAY}${BG}${sub_txt}${BG}${EMPTY_LINE:$((start + text_len))}"
+                local text_len=${#sub_txt}
+                local pad_left=$(( (INNER_W - text_len) / 2 ))
+                local pad_right=$(( INNER_W - pad_left - text_len ))
+                
+                local left_spaces="" tmp_i=0
+                while [ "$tmp_i" -lt "$pad_left" ]; do left_spaces="${left_spaces} " ; tmp_i=$((tmp_i+1)) ; done
+                local right_spaces="" tmp_i=0
+                while [ "$tmp_i" -lt "$pad_right" ]; do right_spaces="${right_spaces} " ; tmp_i=$((tmp_i+1)) ; done
+                
+                line="${left_spaces}${GRAY}${BG}${sub_txt}${BG}${right_spaces}"
             fi
-            out+="${border_col}║${BG}${line}${NC}${border_col}║${NC}\r\n"
+            out="${out}${border_col}║${BG}${line}${NC}${border_col}║${NC}\r\n"
+            y=$((y+1))
         done
-        out+="${border_col}╚${TOP_BAR}╝${NC}\r\n"
+        out="${out}${border_col}╚${TOP_BAR}╝${NC}\r\n"
         printf "%b" "$out"
     }
 
     printf "\033[?25l\033[2J\033[H"
-    draw_opt_frame "$PURPLE" "ZENITH DEXOPT JOB" "Scheduling background optimization"
+    local APP_COUNT=$(pm list packages 2>/dev/null | wc -l | tr -d ' ')
+    draw_opt_frame "$PURPLE" "ZENITH TURBO OPTIMIZATION" "Targeting ${APP_COUNT} applications"
     echo -e "\n  ${GRAY}Press ${YELLOW}[ANY KEY]${GRAY} to start or ${YELLOW}[ENTER]${GRAY} to exit...${NC}\033[K"
 
     local opt_choice
     read -rsn1 opt_choice
     if [ -z "$opt_choice" ]; then printf "\033[?25h\033[2J\033[H"; return; fi
 
-    cmd package bg-dexopt-job >/dev/null 2>&1 &
+    cmd package compile -m speed-profile -a >/dev/null 2>&1 &
     local OPT_PID=$!
     local i=0
 
     while kill -0 $OPT_PID 2>/dev/null; do
         local msg=""
         case $i in
-            0) msg="Analyzing usage patterns..." ;; 1) msg="Running background dexopt..." ;;
-            2) msg="Optimizing frequent paths..." ;; 3) msg="Flushing JIT cache..." ;;
-            4) msg="Compiling hot methods..." ;; 5) msg="Aligning application data..." ;;
-            6) msg="Reducing memory footprint..." ;; 7) msg="Bypassing thermal throttle..." ;;
-            8) msg="Zenith protocol mapping..." ;; 9) msg="Finalizing ART profiles..." ;;
+            0) msg="Purging digital decay..." ;; 1) msg="Unlocking hidden performance..." ;;
+            2) msg="Rewriting the rules of speed..." ;; 3) msg="Infusing memory with pure caffeine..." ;;
+            4) msg="Fine-tuning the chaos under the hood..." ;; 5) msg="Keeping power, discarding junk..." ;;
+            6) msg="Giving your CPU a premium spa..." ;; 7) msg="Hijacking zygote for max velocity..." ;;
+            8) msg="Zenith protocol: Final approach..." ;; 9) msg="Bytes forming a pirate armada..." ;;
         esac
-        draw_opt_frame "$PURPLE" "$msg" "Safe heavy lifting in progress..."
+        draw_opt_frame "$PURPLE" "$msg" "Heavy lifting in progress..."
         echo -e "\n  ${GRAY}Do not interrupt. ${YELLOW}[ENTER]${GRAY} to exit...${NC}\033[K"
         
         local key=""
@@ -1687,7 +1462,7 @@ pm_optimization() {
     done
 
     printf "\033[2J\033[H" 
-    draw_opt_frame "$GREEN" "Optimization complete." "Background DEXOPT successfully scheduled."
+    draw_opt_frame "$GREEN" "Optimization complete." "The chaos has been successfully organized."
     echo -e "\n  ${GRAY}Press ${YELLOW}[ENTER]${GRAY} to return to the hub...${NC}\033[K"
     while true; do
         local final_key=""
@@ -1697,6 +1472,9 @@ pm_optimization() {
     printf "\033[?25h\033[2J\033[H" 
 }
 
+# ==============================================================================
+#  CORE INTERFACE MENU
+# ==============================================================================
 turbo_menu() {
     printf " ${Z_CYAN}${1})${NC}  %-21s %b\n" "TURBO_UGF" "$(check_turbo)"
 }
@@ -1705,9 +1483,10 @@ turbo_run() {
     while true; do
         hard_clear
         draw_header "${Z_CYAN}" "USERSPACE GOVERNOR FRAMEWORK"
-        echo -e "${Z_CYAN} 1)${NC} ${Z_WHITE}Toggle Vendor Emulation Daemon${NC}  $(check_turbo)"        
+        echo -e "${Z_CYAN} 1)${NC} ${Z_WHITE}Toggle Zenith Daemon${NC}         $(check_turbo)"        
         echo -e "${Z_CYAN} 2)${NC} ${Z_WHITE}Open Live Telemetry Dashboard${NC}"        
-        echo -e "${Z_CYAN} 3)${NC} ${Z_WHITE}Run Safe ART Background Dexopt${NC}"        
+        echo -e "${Z_CYAN} 3)${NC} ${Z_WHITE}Toggle Telemetry Data Stream${NC}  $(check_telem)"        
+        echo -e "${Z_CYAN} 4)${NC} ${Z_WHITE}Run Safe ART Background Dexopt${NC}"        
         echo -e "\n${Z_YELLOW} b)${NC} ${Z_WHITE}Return to main menu${NC}"
 
         echo -n -e "\n Option: "
@@ -1715,7 +1494,19 @@ turbo_run() {
         case "$t_choice" in
             1) toggle_turbo_system ;;
             2) view_turbo_pulse ;;
-            3) pm_optimization ;;
+            3) 
+                if [ -f "$TELEMETRY_FLAG" ]; then
+                    rm -f "$TELEMETRY_FLAG"
+                    rm -f /data/local/tmp/zenith_shm/telemetry.state* /dev/zenith/telemetry.state* 2>/dev/null
+                    echo -e "\n${Z_YELLOW}Telemetry Data Stream DISABLED. Zero-overhead mode active.${NC}"
+                else
+                    mkdir -p "$BASE_DIR" 2>/dev/null
+                    touch "$TELEMETRY_FLAG"
+                    echo -e "\n${Z_GREEN}Telemetry Data Stream ENABLED.${NC}"
+                fi
+                sleep 1.5
+                ;;
+            4) pm_optimization ;;
             b|B) break ;;
             *) echo -e "${Z_RED}Invalid input!${NC}"; sleep 1 ;;
         esac
