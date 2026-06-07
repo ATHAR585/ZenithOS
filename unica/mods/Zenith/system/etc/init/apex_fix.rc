@@ -17,7 +17,6 @@ service success_reset /system/bin/apex_reset.sh
     seclabel u:r:su:s0
 
 on late-fs
-    start boot_guardian
     start apex_check
 
 on property:sys.boot_completed=1
