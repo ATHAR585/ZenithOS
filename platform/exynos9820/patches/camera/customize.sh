@@ -79,15 +79,64 @@ DELETE_FROM_WORK_DIR "system" "system/priv-app/SamsungCamera/SamsungCamera.apk.p
 DELETE_FROM_WORK_DIR "system" "system/app/FilterProvider/oat"
 LOG_STEP_OUT
 
+LOG_STEP_IN "- Adding ZenithOS Custom Camera Assets"
+ADD_TO_WORK_DIR "platform/exynos9820/patches/camera" "system" "system/lib64/libPortraitSolution.camera.samsung.so" 0 0 644 "u:object_r:system_lib_file:s0"
+
+BLOBS_LIST="
+system/cameradata/portrait_data/dual_bokeh_feature.json
+system/cameradata/portrait_data/SRIB_HumanInsSeg_FP16_V210.snf
+system/cameradata/portrait_data/SRIB_HumanSegLite_INT8_V001.tflite
+system/cameradata/preloadfilters/internal_filter.xml
+system/cameradata/preloadfilters/grain_patch_strong.png
+system/cameradata/preloadfilters/grain_patch_strong_4.png
+system/cameradata/preloadfilters/grain_patch_strong_6.png
+system/cameradata/preloadfilters/grain_patch_weak.png
+system/cameradata/preloadfilters/grain_patch_weak_1.png
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.blossom.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.c360wb.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.chill.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.cinepea.json
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.cinepea.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.classic.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.crystal.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.excitea_film_1008.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.fc03.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.fleecia_film.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.greyscale.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.jazzchrome_film.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.kissme.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.light.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.lolli.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.lomo400.json
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.lomo400.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.noir_mono_myfilter.json
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.noir_mono_myfilter.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.pale_jaehan.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.shadow.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.softtone_warm_mini.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.softtone_white_mini.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.sun_beam.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.vivid_cool.sel
+system/cameradata/preloadfilters/Sel/com.samsung.android.provider.filterprovider.vivid_warm.sel
+"
+for blob in $BLOBS_LIST
+do
+    ADD_TO_WORK_DIR "platform/exynos9820/patches/camera" "system" "$blob" 0 0 644 "u:object_r:system_file:s0" &
+done
+
+# shellcheck disable=SC2046
+wait $(jobs -p) || exit 1
+LOG_STEP_OUT
+
 LOG_STEP_IN "- Fixing AI Photo Editor"
 cp -a --preserve=all \
     "$WORK_DIR/system/system/cameradata/portrait_data/single_bokeh_feature.json" \
-    "$WORK_DIR/system/system/cameradata/portrait_data/nexus_bokeh_feature.json"
-SET_METADATA "system" "system/cameradata/portrait_data/nexus_bokeh_feature.json" 0 0 644 "u:object_r:system_file:s0"
+    "$WORK_DIR/system/system/cameradata/portrait_data/zenith_bokeh_feature.json"
+SET_METADATA "system" "system/cameradata/portrait_data/zenith_bokeh_feature.json" 0 0 644 "u:object_r:system_file:s0"
 sed -i "s/MODEL_TYPE_INSTANCE_CAPTURE/MODEL_TYPE_OBJ_INSTANCE_CAPTURE/g" \
     "$WORK_DIR/system/system/cameradata/portrait_data/single_bokeh_feature.json"
 sed -i \
-    's/system\/cameradata\/portrait_data\/single_bokeh_feature.json/system\/cameradata\/portrait_data\/nexus_bokeh_feature.json\x00/g' \
+    's/system\/cameradata\/portrait_data\/single_bokeh_feature.json/system\/cameradata\/portrait_data\/zenith_bokeh_feature.json/g' \
     "$WORK_DIR/system/system/lib64/libPortraitSolution.camera.samsung.so"
 LOG_STEP_OUT
 
