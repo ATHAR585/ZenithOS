@@ -27,8 +27,5 @@ sleep 10
 # Counter reset
 echo 0 > "$FILE"
 
-# PSTORE TISZTÍTÁS: Kijavítja a beragadó kernel panic hibát
-rm -f /sys/fs/pstore/* 2>/dev/null
-
 # Log
-echo "$(date '+%Y-%m-%d %H:%M:%S') | BOOT SUCCESS - COUNTER RESET & PSTORE CLEARED" >> "$LOG_FILE"
+echo "$(date '+%Y-%m-%d %H:%M:%S') | BOOT SUCCESS - COUNTER RESET" >> "$LOG_FILE"

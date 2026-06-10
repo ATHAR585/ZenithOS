@@ -723,7 +723,7 @@ EOF
 }
 
 # ==============================================================================
-#  [ (🟣) ZENITH USERSPACE GOVERNOR v4.8-MASTER-APEX - PERFORMANCE TUNED ] 
+#  [ (🟣) ZENITH USERSPACE GOVERNOR v5.0-MASTER-APEX - HYBRID ENGINE ] 
 # ==============================================================================
 
 SERVICE_D="/data/adb/service.d"
@@ -757,24 +757,10 @@ check_telem() {
 toggle_turbo_system() {
     if pgrep -f "zenith_daemon" >/dev/null || [ -f "$SERVICE_D/zenith_turbo.sh" ]; then
         echo -e "${Z_YELLOW}Initiating graceful shutdown sequence...${NC}"
+        touch "$STOP_FLAG"
+        sleep 0.2
+        pkill -9 -f "zenith_daemon.sh" 2>/dev/null
         
-        mkdir -p "$BASE_DIR" 2>/dev/null
-        touch "$STOP_FLAG" 2>/dev/null
-        
-        # Hagyunk időt a graceful shutdownnak
-        sleep 2.5 
-        
-        # --- JAVÍTÁS: Agresszív zombi-irtás fájltörlés előtt ---
-        # Garantáljuk, hogy a getevent és a végtelen ciklusban ragadt subshell-ek meghaljanak.
-        for pid in $(pgrep -f "zenith_daemon"); do
-            kill -9 $pid 2>/dev/null
-        done
-        for pid in $(pgrep -f "zenith_turbo.sh"); do
-            kill -9 $pid 2>/dev/null
-        done
-        # -------------------------------------------------------
-        
-        # Rendszer paraméterek visszaállítása az alapállapotra
         for disk in /sys/block/sda/queue/read_ahead_kb /sys/block/mmcblk0/queue/read_ahead_kb; do
             [ -w "$disk" ] && echo 128 > "$disk" 2>/dev/null
         done
@@ -783,10 +769,7 @@ toggle_turbo_system() {
         
         sleep 0.2
         umount /dev/zenith 2>/dev/null  
-        
-        # MOST már tényleg biztonságos törölni a fájlokat
         rm -rf /dev/zenith "$BASE_DIR" "$SERVICE_D/zenith_turbo.sh" 2>/dev/null
-        
         echo -e "${Z_GRAY}Governor successfully forced OFFLINE.${NC}"  
         sleep 1  
     else  
@@ -797,134 +780,26 @@ toggle_turbo_system() {
 
         cat > "$SERVICE_D/zenith_turbo.sh" << 'EOF'
 #!/system/bin/sh
-# ==============================================================================
-#  SUSPEND SAFE GOVERNOR LAYER v1
-#  Bootloop protection wrapper for Zenith / userspace governors
-# ==============================================================================
 
-TAG="[ZENITH-SAFE]"
+# A daemon azonnal indul és lekezeli a Boot Burstöt a bootolás alatt.
+sh /data/local/tmp/zenith/zenith_daemon.sh >/dev/null 2>&1 &
 
-BASE_DIR="/data/local/tmp/zenith"
-STOP_FLAG="$BASE_DIR/stop.flag"
-SAFE_FLAG="$BASE_DIR/safe_mode.flag"
+# Grace Boot: Várakozás a rendszerfelállásra a kernel szintű paraméterek előtt.
+until [ "$(getprop init.svc.bootanim)" = "stopped" ]; do sleep 2; done
 
-log() {
-    echo "$TAG $1" >/dev/kmsg 2>/dev/null
-}
+setprop sys.lmk.minfree_levels "18432,23040,27648,32256,55296,80640" 2>/dev/null
 
-wait_boot() {
-    log "Waiting for system boot stability..."
-
-    # 1. bootanim stop
-    while [ "$(getprop init.svc.bootanim 2>/dev/null)" != "stopped" ]; do
-        sleep 2
-    done
-
-    # 2. boot completed flag
-    while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
-        sleep 2
-    done
-
-    # 3. additional stabilization delay (critical on Samsung)
-    sleep 10
-
-    log "Boot stabilized."
-}
-
-safe_sysfs_gate() {
-    # blokkolja a túl korai tuningot
-    BOOT_TIME=$(cut -d. -f1 /proc/uptime 2>/dev/null)
-
-    if [ "${BOOT_TIME:-0}" -lt 90 ]; then
-        return 1
-    fi
-
-    return 0
-}
-
-enable_safe_mode() {
-    log "SAFE MODE ACTIVATED"
-
-    touch "$SAFE_FLAG"
-
-    # agresszív governor leállítás
-    pkill -f zenith_daemon.sh 2>/dev/null
-    pkill -f zenith 2>/dev/null
-
-    # reset basic freq safety
-    for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq; do
-        [ -w "$f" ] && echo 1800000 > "$f" 2>/dev/null
-    done
-
-    for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_min_freq; do
-        [ -w "$f" ] && echo 300000 > "$f" 2>/dev/null
-    done
-
-    log "System returned to safe baseline."
-}
-
-start_zenith() {
-    log "Launching Zenith (delayed safe start)"
-
-    if [ -f "$SAFE_FLAG" ]; then
-        log "SAFE MODE active -> skipping Zenith"
-        return
-    fi
-    
-    # Rendszer szintű optimalizációk biztonságos betöltése
-    setprop sys.lmk.minfree_levels "18432,23040,27648,32256,55296,80640" 2>/dev/null
-
-    for q in /sys/block/*/queue/scheduler; do
-        [ -f "$q" ] || continue
-        grep -q "bfq" "$q" && echo "bfq" > "$q" || echo "mq-deadline" > "$q"
-    done
-
-    if [ -f "$BASE_DIR/zenith_daemon.sh" ]; then
-        nohup sh "$BASE_DIR/zenith_daemon.sh" >/dev/null 2>&1 &
-    fi
-}
-
-watchdog() {
-    while [ ! -f "$STOP_FLAG" ]; do
-        sleep 15
-
-        # ha boot után is túl korai crash gyanús
-        if [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; then
-            if ! pgrep -f zenith_daemon.sh >/dev/null; then
-                log "Daemon crash detected -> SAFE MODE fallback"
-                enable_safe_mode
-                break
-            fi
-        fi
-    done
-}
-
-# ==============================================================================
-# MAIN BOOT FLOW
-# ==============================================================================
-
-wait_boot
-
-# extra stabilizáció
-sleep 5
-
-# csak stabil boot után indulhat
-if safe_sysfs_gate; then
-    start_zenith
-else
-    log "Boot too early -> delaying engine start"
-    sleep 20
-    start_zenith
-fi
-
-watchdog &
+for q in /sys/block/*/queue/scheduler; do
+    [ -f "$q" ] || continue
+    grep -q "bfq" "$q" && echo "bfq" > "$q" || echo "mq-deadline" > "$q"
+done
 EOF
         chmod 755 "$SERVICE_D/zenith_turbo.sh"
 
         cat > "$BASE_DIR/zenith_daemon.sh" << 'EOF'
 #!/system/bin/sh
 # ==============================================================================
-# ZENITH v4.8-MASTER-APEX (PERFORMANCE TUNED + FLUID UI)
+# ZENITH-MASTER-APEX (DEEP SLEEP SAFE + AI THERMAL + GRACE BOOT + SOFT BURST)
 # ==============================================================================
 BASE_DIR="/data/local/tmp/zenith"
 STOP_FLAG="$BASE_DIR/stop.flag"
@@ -937,6 +812,19 @@ mkdir -p "$SHM_DIR" 2>/dev/null
 mount -t tmpfs -o size=2m tmpfs "$SHM_DIR" 2>/dev/null || SHM_DIR="/data/local/tmp/zenith_shm"
 mkdir -p "$SHM_DIR"
 
+# ------------------------------------------------------------------------------
+# 0. ATOMIC LOCKFILE & LOGGING
+# ------------------------------------------------------------------------------
+LOCKDIR="$SHM_DIR/daemon.lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+    exit 0
+fi
+
+log_event() {
+    echo "$(date +%s)|$1" >> "$BASE_DIR/events.log"
+}
+log_event "DAEMON_START"
+
 METRICS_FILE="$SHM_DIR/metrics.state"
 TELEMETRY_FILE="$SHM_DIR/telemetry.state"
 TOUCH_STATE="$SHM_DIR/touch.state"
@@ -944,30 +832,22 @@ TOUCH_STATE="$SHM_DIR/touch.state"
 echo "0" > "$TOUCH_STATE"
 touch "$METRICS_FILE"
 
+TOUCH_DEV=$(getevent -pl 2>/dev/null | awk '
+    /add device/ { for(i=1;i<=NF;i++) if($i ~ /^\/dev\/input/) { dev=$i; break; } }
+    /touchscreen|sec_touchscreen|touch|fts|goodix/i {print dev; exit}
+')
+[ -z "$TOUCH_DEV" ] && TOUCH_DEV="/dev/input/event2"
+
 # ------------------------------------------------------------------------------
-# 1. INPUT DAEMON (Self-Healing & 0% Overhead)
+# 1. INPUT DAEMON (Blocking & 0% Overhead)
 # ------------------------------------------------------------------------------
 input_daemon() {
-    # 🧯 Init barrier: Megvárjuk a teljes bootot, hogy a getevent loop ne okozzon deadlockot
-    while [ "$(getprop sys.boot_completed 2>/dev/null)" != "1" ]; do sleep 5; done
-
     while [ ! -f "$STOP_FLAG" ]; do
-        TOUCH_DEV=$(getevent -pl 2>/dev/null | awk '
-            /add device/ { for(i=1;i<=NF;i++) if($i ~ /^\/dev\/input/) { dev=$i; break; } }
-            /touchscreen|sec_touchscreen|touch|fts|goodix/i {print dev; exit}
-        ')
-        [ -z "$TOUCH_DEV" ] && TOUCH_DEV="/dev/input/event2"
-
-        if [ ! -e "$TOUCH_DEV" ]; then
-            sleep 1
-            continue
-        fi
-
-        getevent -lt "$TOUCH_DEV" 2>/dev/null | grep --line-buffered -E "EV_ABS|BTN_TOUCH" | while read -r _; do
-            if [ -f "$STOP_FLAG" ]; then break 2; fi
+        getevent -ql "$TOUCH_DEV" 2>/dev/null | while read -r _; do
+            if [ -f "$STOP_FLAG" ]; then break; fi
             echo "$(date +%s)" > "$TOUCH_STATE"
         done
-        sleep 2
+        sleep 1
     done
 }
 
@@ -989,6 +869,7 @@ engine_daemon() {
     LAST_IDLE=0; LAST_TOTAL=0; CPU_FAST=0; CPU_SLOW=0
     STAT=0; CHARGE_TICK=0; FRAME_ID=0; LAST_TEMP=0
     EMA_SAMPLES=0; EMA_READY=0
+    LAST_DUMPSYS_CHECK=0; AWAKE_STATE=1
 
     while [ ! -f "$STOP_FLAG" ]; do
         NOW=$(date +%s)
@@ -1001,29 +882,29 @@ engine_daemon() {
             if [ "${br:-0}" -gt 0 ]; then SCREEN_ON=1 ; break ; fi
         done
         
+        if [ "$SCREEN_ON" -eq 1 ]; then
+            if [ $((NOW - LAST_DUMPSYS_CHECK)) -ge 10 ]; then
+                if dumpsys power 2>/dev/null | grep -q "mWakefulness=Awake"; then
+                    AWAKE_STATE=1
+                else
+                    AWAKE_STATE=0
+                fi
+                LAST_DUMPSYS_CHECK=$NOW
+            fi
+            [ "$AWAKE_STATE" -eq 0 ] && SCREEN_ON=0
+        fi
+        
         TOUCH_TS=$(cat "$TOUCH_STATE" 2>/dev/null)
         [ -n "$TOUCH_TS" ] && [ $((NOW - TOUCH_TS)) -le 2 ] && TOUCH_ACTIVE=1 || TOUCH_ACTIVE=0
         
-        # Dinamikus Dumpsys polling (OneUI optimalizáció)
-        [ "$TOUCH_ACTIVE" -eq 1 ] && FOCUS_CHECK_INTERVAL=3 || FOCUS_CHECK_INTERVAL=5
+        [ "$TOUCH_ACTIVE" -eq 1 ] && FOCUS_CHECK_INTERVAL=2 || FOCUS_CHECK_INTERVAL=5
+        [ "$PROF" = "BURST" ] && FOCUS_CHECK_INTERVAL=15
         
-        UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 9999)
-
-        # 🧯 Csak 120s uptime után használjuk a dumpsys-t, hogy a SystemServer ne fagyjon ki early bootban
-        if [ "$SCREEN_ON" -eq 1 ] && [ "$UPTIME" -ge 120 ] && [ $((NOW - LAST_FOCUS_CHECK)) -ge "$FOCUS_CHECK_INTERVAL" ]; then
+        if [ "$SCREEN_ON" -eq 1 ] && [ $((NOW - LAST_FOCUS_CHECK)) -ge "$FOCUS_CHECK_INTERVAL" ]; then
             FOCUS_PKG=$(dumpsys window 2>/dev/null | awk '/mCurrentFocus/ {gsub(/[{}]/,""); split($NF,a,"/"); print a[1]; exit}')
-            
-            # OneUI 15+ Fallback
-            if [ -z "$FOCUS_PKG" ] || [ "$FOCUS_PKG" = "null" ]; then
-                FOCUS_PKG=$(dumpsys activity activities 2>/dev/null | awk '/ResumedActivity/ {gsub(/[{}]/,""); split($NF,a,"/"); print a[1]; exit}')
-            fi
             LAST_FOCUS_CHECK=$NOW
         elif [ "$SCREEN_ON" -eq 0 ]; then
             FOCUS_PKG="SLEEP"
-            LAST_FOCUS_CHECK=$NOW
-        elif [ "$UPTIME" -lt 120 ]; then
-            FOCUS_PKG="NORMAL"
-            LAST_FOCUS_CHECK=$NOW
         fi
 
         case "$FOCUS_PKG" in
@@ -1075,8 +956,8 @@ engine_daemon() {
                 EMA_READY=0
             else
                 EMA_READY=1
-                CPU_FAST=$(( (CPU_FAST * 3 + RAW_USAGE * 7) / 10 ))
-                CPU_SLOW=$(( (CPU_SLOW * 7 + RAW_USAGE * 3) / 10 ))
+                CPU_FAST=$(( (CPU_FAST * 5 + RAW_USAGE * 5) / 10 ))
+                CPU_SLOW=$(( (CPU_SLOW * 8 + RAW_USAGE * 2) / 10 ))
             fi
         fi
         LAST_TOTAL=$total
@@ -1124,8 +1005,8 @@ dispatcher_daemon() {
 
     LAST_MODE=0; FAST_T=45; COOL_SCORE=0
     LAST_P4_MAX=""; LAST_P6_MAX=""; LAST_P4_MIN=""; LAST_P6_MIN=""
-    LAST_GPU_MIN=""; LAST_GPU_MAX=""
-    LAST_CPUSET_STATE="NORMAL"; LAST_READAHEAD="128"
+    LAST_GPU_MAX=""
+    LAST_READAHEAD="128"
     
     INPUT_GRACE_UNTIL=0; UI_LOCK_UNTIL=0; PKG_BOOST_UNTIL=0; GAME_LOCK_UNTIL=0
     LAST_FOCUS_PKG=""
@@ -1133,13 +1014,9 @@ dispatcher_daemon() {
     
     BOOT_DONE=0; BOOT_BOOST_UNTIL=0
 
-    # Modern OneUI Hardver detektálás
     GPU_PATH=""
-    for g in /sys/class/devfreq/*; do
-        [ -f "$g/max_freq" ] || [ -f "$g/scaling_max_freq" ] || continue
-        case "$g" in
-            *mali*|*g3d*|*gpu*) GPU_PATH="$g"; break ;;
-        esac
+    for g in /sys/class/devfreq/*11800000.mali* /sys/class/devfreq/*mali* /sys/kernel/gpu; do
+        if [ -f "$g/max_freq" ] || [ -f "$g/scaling_max_freq" ]; then GPU_PATH="$g"; break; fi
     done
 
     TRUE_GPU_MAX="702000000"
@@ -1148,80 +1025,52 @@ dispatcher_daemon() {
         [ -z "$TRUE_GPU_MAX" ] && TRUE_GPU_MAX="702000000"
     fi
 
-    # Uclamp inicializálás
-    USE_UCLAMP=0
-    if [ -w "/dev/cpuctl/top-app/cpu.uclamp.min" ]; then
-        USE_UCLAMP=1
-    fi
-
     apply_unified_profile() {
         local P0_MAX P4_MAX P6_MAX P0_MIN P4_MIN P6_MIN READAHEAD
-        local G_MIN G_MAX CACHE_PRES SWAP_VAL SCHED_BOOST UCLAMP_MIN
+        local G_MAX CACHE_PRES SWAP_VAL
         local IS_SCREEN_ON="$2"
 
         case "$1" in
             1) # NORMAL / IDLE / SLEEP
                P0_MAX=1456000; P4_MAX=2028000; P6_MAX=2106000 
                P0_MIN=300000;  P4_MIN=400000;  P6_MIN=546000
-               G_MIN=260000000; G_MAX=455000000 
-               READAHEAD=128; CACHE_PRES=80; SWAP_VAL=110
-               SCHED_BOOST=0; UCLAMP_MIN=0 ;;
+               G_MAX=455000000 
+               READAHEAD=128; CACHE_PRES=80; SWAP_VAL=110 ;;
                
             2) # SUSTAIN / SCROLL / BOOT STABILIZATION
                P0_MAX=1781000; P4_MAX=2216000; P6_MAX=2496000 
                P0_MIN=400000;  P4_MIN=500000;  P6_MIN=832000
-               G_MIN=340000000; G_MAX=572000000 
-               READAHEAD=256; CACHE_PRES=70; SWAP_VAL=90
-               SCHED_BOOST=10; UCLAMP_MIN=128 ;;
+               G_MAX=572000000 
+               READAHEAD=256; CACHE_PRES=70; SWAP_VAL=90 ;;
 
             3) # BURST / GAME
                P0_MAX=1950000; P4_MAX=2314000; P6_MAX=2730000 
-               P0_MIN=500000;  P4_MIN=741000;  P6_MIN=1066000
-               G_MIN=572000000; G_MAX="$TRUE_GPU_MAX" 
-               READAHEAD=256; CACHE_PRES=50; SWAP_VAL=70
-               SCHED_BOOST=25; UCLAMP_MIN=256 ;;
+               P0_MIN=500000;  P4_MIN=741000;  P6_MIN=1352000
+               G_MAX="$TRUE_GPU_MAX" 
+               READAHEAD=512; CACHE_PRES=50; SWAP_VAL=70 ;;
 
             4) # SOFT THERMAL (fluid-safe)
                P0_MAX=1200000; P4_MAX=1560000; P6_MAX=1781000 
                P0_MIN=300000;  P4_MIN=400000;  P6_MIN=546000
-               G_MIN=260000000; G_MAX=455000000 
-               READAHEAD=128; CACHE_PRES=120; SWAP_VAL=120
-               SCHED_BOOST=5; UCLAMP_MIN=0 ;;
+               G_MAX=455000000 
+               READAHEAD=128; CACHE_PRES=120; SWAP_VAL=120 ;;
 
             5) # HARD THERMAL (critical lock)
                P0_MAX=1000000; P4_MAX=1300000; P6_MAX=1560000 
                P0_MIN=300000;  P4_MIN=400000;  P6_MIN=546000
-               G_MIN=260000000; G_MAX=340000000 
-               READAHEAD=128; CACHE_PRES=200; SWAP_VAL=150
-               SCHED_BOOST=0; UCLAMP_MIN=0 ;;
+               G_MAX=340000000 
+               READAHEAD=128; CACHE_PRES=200; SWAP_VAL=150 ;;
                
             6) # BOOT SOFT BURST
                P0_MAX=1704000; P4_MAX=2216000; P6_MAX=2496000 
                P0_MIN=400000;  P4_MIN=650000;  P6_MIN=832000
-               G_MIN=340000000; G_MAX=572000000 
-               READAHEAD=256; CACHE_PRES=60; SWAP_VAL=90
-               SCHED_BOOST=15; UCLAMP_MIN=128 ;;
+               G_MAX=572000000 
+               READAHEAD=256; CACHE_PRES=60; SWAP_VAL=90 ;;
         esac
 
         if [ "$1" -ne "$LAST_MODE" ]; then
             safe_write "$CACHE_PRES" "/proc/sys/vm/vfs_cache_pressure"
             safe_write "$SWAP_VAL" "/proc/sys/vm/swappiness"
-        fi
-
-        if [ "$IS_SCREEN_ON" -eq 1 ]; then
-            if [ "$1" -ge 4 ] && [ "$LAST_CPUSET_STATE" != "RESTRICTED" ]; then
-                [ -w "/dev/cpuset/top-app/cpus" ] && safe_write "0-6" "/dev/cpuset/top-app/cpus"
-                LAST_CPUSET_STATE="RESTRICTED"
-            elif [ "$1" -lt 4 ] && [ "$LAST_CPUSET_STATE" != "NORMAL" ]; then
-                [ -w "/dev/cpuset/top-app/cpus" ] && safe_write "0-7" "/dev/cpuset/top-app/cpus"
-                LAST_CPUSET_STATE="NORMAL"
-            fi
-            
-            if [ "$USE_UCLAMP" -eq 1 ]; then
-                safe_write "$UCLAMP_MIN" "/dev/cpuctl/top-app/cpu.uclamp.min"
-            else
-                safe_write "$SCHED_BOOST" "/dev/stune/top-app/schedtune.boost"
-            fi
         fi
 
         if [ "$READAHEAD" != "$LAST_READAHEAD" ]; then
@@ -1234,10 +1083,7 @@ dispatcher_daemon() {
         if [ -n "$GPU_PATH" ] && [ "$IS_SCREEN_ON" -eq 1 ]; then
             if [ -f "$GPU_PATH/scaling_max_freq" ]; then safe_write "$G_MAX" "$GPU_PATH/scaling_max_freq"
             elif [ -f "$GPU_PATH/max_freq" ]; then safe_write "$G_MAX" "$GPU_PATH/max_freq"; fi
-            
-            if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "$G_MIN" "$GPU_PATH/scaling_min_freq"
-            elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "$G_MIN" "$GPU_PATH/min_freq"; fi
-            LAST_GPU_MIN="$G_MIN"; LAST_GPU_MAX="$G_MAX"
+            LAST_GPU_MAX="$G_MAX"
         fi
 
         safe_write "$P0_MAX" "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
@@ -1252,17 +1098,14 @@ dispatcher_daemon() {
             safe_cpu "policy6" "$P6_MAX" "$P6_MIN"
             LAST_P6_MAX="$P6_MAX" ; LAST_P6_MIN="$P6_MIN"
         fi
-
-        LAST_BASELINE_P6_MIN="$P6_MIN" 
     }
 
     while [ ! -f "$STOP_FLAG" ]; do
         NOW=$(date +%s)
         UPTIME=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 9999)
         
-        # 🧯 Init barrier a dispatchernek is
         if [ "$BOOT_DONE" -eq 0 ]; then
-            if [ "$(getprop sys.boot_completed 2>/dev/null)" = "1" ]; then
+            if [ "$(getprop init.svc.bootanim 2>/dev/null)" = "stopped" ]; then
                 BOOT_DONE=1
                 BOOT_BOOST_UNTIL=$((NOW + 60))
             fi
@@ -1271,11 +1114,7 @@ dispatcher_daemon() {
         if [ -s "$METRICS_FILE" ]; then
             IFS='|' read -r FRAME_ID TEMP STAT PROF CPU_FAST CPU_SLOW THERMAL_VELOCITY FOCUS_PKG SCREEN_ON EMA_READY < "$METRICS_FILE" 2>/dev/null
             
-            # Szigorú Tmpfs race condition szűrés
-            case "$FRAME_ID" in
-                ''|*[!0-9]*) continue ;;
-            esac
-            
+            # Boot Thermal Ignorance (Első 60mp alatt fix 45°C)
             if [ "$UPTIME" -lt 60 ]; then
                 FAST_T=45
             else
@@ -1284,21 +1123,18 @@ dispatcher_daemon() {
 
             if [ "${SCREEN_ON:-1}" -eq 0 ]; then
                 MODEX=1; REASON="DEEP_SLEEP_LOCK"
+                
+                if [ "$LAST_MODE" -ne 1 ]; then
+                    echo -e "SCREEN_ON=0\nMODE=$LAST_MODE\nTEMP=$FAST_T\nCHARGING=$STAT\nTIME=$(date)" > "$BASE_DIR/last_suspend_state.txt"
+                fi
+                
                 TOUCH_ACTIVE=0; MICRO_BURST=0
                 HIGH_LOAD_COUNT=0
                 
-                safe_write "0" "/dev/stune/top-app/schedtune.boost"
-                [ "$USE_UCLAMP" -eq 1 ] && safe_write "0" "/dev/cpuctl/top-app/cpu.uclamp.min"
-
-                if [ -n "$GPU_PATH" ]; then
-                    if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "260000000" "$GPU_PATH/scaling_min_freq"
-                    elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "260000000" "$GPU_PATH/min_freq"; fi
-                    LAST_GPU_MIN="260000000"
-                fi
-
                 INPUT_GRACE_UNTIL=0; UI_LOCK_UNTIL=0; PKG_BOOST_UNTIL=0; GAME_LOCK_UNTIL=0
                 
                 if [ "$MODEX" -ne "$LAST_MODE" ]; then
+                    log_event "MODE_CHANGE_${LAST_MODE}_TO_${MODEX}"
                     apply_unified_profile "$MODEX" "$SCREEN_ON"
                     LAST_MODE="$MODEX"
                 fi
@@ -1337,14 +1173,14 @@ dispatcher_daemon() {
             
             [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ] && TOUCH_ACTIVE=1
 
-            if [ "$CPU_FAST" -gt 55 ]; then
+            if [ "$CPU_FAST" -gt 45 ]; then
                 HIGH_LOAD_COUNT=$((HIGH_LOAD_COUNT + 1))
             else
                 HIGH_LOAD_COUNT=0
             fi
 
             if [ "$PROF" = "BURST" ]; then
-                GAME_LOCK_UNTIL=$((NOW + 8))
+                GAME_LOCK_UNTIL=$((NOW + 15))
             fi
 
             if [ "$SCREEN_ON" -eq 1 ]; then
@@ -1354,13 +1190,14 @@ dispatcher_daemon() {
             fi
             LAST_FOCUS_PKG="$FOCUS_PKG"
 
+            # 1. Base Target Selection
             TARGET_MODE=1
             REASON="IDLE_APP_PROFILE"
 
             if [ "$BOOT_DONE" -eq 0 ] || [ "$NOW" -lt "$BOOT_BOOST_UNTIL" ]; then
                 TARGET_MODE=6 ; REASON="BOOT_SOFT_BURST"
             elif [ "$UPTIME" -lt 180 ]; then
-                TARGET_MODE=2 ; REASON="BOOT_STABILIZATION"
+                TARGET_MODE=2 ; REASON="BOOT_STABILIZATION" # Grace boot szakasz
             elif [ "${EMA_READY:-0}" -eq 0 ]; then
                 TARGET_MODE=2 ; REASON="EMA_WARMUP"
             elif [ "$NOW" -lt "$GAME_LOCK_UNTIL" ]; then
@@ -1381,10 +1218,10 @@ dispatcher_daemon() {
                 else TARGET_MODE=2 ; REASON="UI_ANIMATION_LOCK" ; fi
             fi
 
-            # Átlagolt thermal limites
+            # 2. Thermal Overrides
             CHG_OFFSET=0 ; [ "$STAT" -eq 1 ] && CHG_OFFSET=3
-            SOFT_LIMIT=$((67 + CHG_OFFSET))
-            HARD_LIMIT=$((72 + CHG_OFFSET))
+            SOFT_LIMIT=$((70 + CHG_OFFSET))
+            HARD_LIMIT=$((75 + CHG_OFFSET))
 
             if [ "$LAST_MODE" -eq 5 ]; then
                 if [ "$FAST_T" -le $((SOFT_LIMIT + 1)) ] && [ "$COOL_SCORE" -ge 6 ] && [ "$CPU_SLOW" -lt 55 ]; then
@@ -1409,42 +1246,22 @@ dispatcher_daemon() {
             fi
 
             if [ "$MODEX" -ne "$LAST_MODE" ]; then
+                log_event "MODE_CHANGE_${LAST_MODE}_TO_${MODEX}"
+                if [ "$MODEX" -eq 4 ] || [ "$MODEX" -eq 5 ]; then log_event "THERMAL_ENTER_$MODEX"
+                elif [ "$LAST_MODE" -eq 4 ] || [ "$LAST_MODE" -eq 5 ]; then log_event "THERMAL_EXIT_$MODEX" ; fi
                 apply_unified_profile "$MODEX" "$SCREEN_ON"
                 LAST_MODE="$MODEX"
             fi
 
-            ACTIVE_P6_MIN="$LAST_BASELINE_P6_MIN"
-            ACTIVE_GPU_MIN="$LAST_GPU_MIN"
             TOUCH_LIVE_GUI=0
-            
             if [ "$LAST_MODE" -lt 4 ] && [ "$SCREEN_ON" -eq 1 ]; then
                 if [ "$TOUCH_ACTIVE" -eq 1 ] || [ "$NOW" -lt "$INPUT_GRACE_UNTIL" ]; then
-                    ACTIVE_P6_MIN=1066000 
-                    # Dinamikus GPU lépcsők érintés alatt
-                    if [ "$LAST_MODE" -eq 3 ]; then
-                        ACTIVE_GPU_MIN=650000000
-                    elif [ "$MICRO_BURST" -eq 1 ] || [ "$LAST_MODE" -eq 2 ]; then
-                        ACTIVE_GPU_MIN=520000000
-                    else
-                        ACTIVE_GPU_MIN=455000000
-                    fi
                     TOUCH_LIVE_GUI=1
-                fi
-                if [ "$LAST_P6_MIN" != "$ACTIVE_P6_MIN" ]; then
-                    safe_cpu "policy6" "" "$ACTIVE_P6_MIN"
-                    LAST_P6_MIN="$ACTIVE_P6_MIN"
-                fi
-                
-                if [ -n "$GPU_PATH" ] && [ "$LAST_GPU_MIN" != "$ACTIVE_GPU_MIN" ]; then
-                    if [ -f "$GPU_PATH/scaling_min_freq" ]; then safe_write "$ACTIVE_GPU_MIN" "$GPU_PATH/scaling_min_freq"
-                    elif [ -f "$GPU_PATH/min_freq" ]; then safe_write "$ACTIVE_GPU_MIN" "$GPU_PATH/min_freq"; fi
-                    LAST_GPU_MIN="$ACTIVE_GPU_MIN"
                 fi
             fi
 
             if [ -f "/data/local/tmp/zenith/telemetry.flag" ]; then
-                G_MHZ=$((ACTIVE_GPU_MIN / 1000000))
-                echo "$FRAME_ID|$MODEX|$PROF|$FAST_T|$LAST_P4_MIN|$LAST_P4_MAX|$LAST_P6_MIN|$LAST_P6_MAX|$STAT|$TOUCH_LIVE_GUI|$REASON|$CPU_FAST|$LAST_READAHEAD|$G_MHZ" > "${TELEMETRY_FILE}.tmp"
+                echo "$FRAME_ID|$MODEX|$PROF|$FAST_T|$LAST_P4_MIN|$LAST_P4_MAX|$LAST_P6_MIN|$LAST_P6_MAX|$STAT|$TOUCH_LIVE_GUI|$REASON|$CPU_FAST|$LAST_READAHEAD|0" > "${TELEMETRY_FILE}.tmp"
                 mv -f "${TELEMETRY_FILE}.tmp" "$TELEMETRY_FILE"
             else
                 rm -f "$TELEMETRY_FILE" "${TELEMETRY_FILE}.tmp" 2>/dev/null
@@ -1459,16 +1276,39 @@ dispatcher_daemon() {
     done
 }
 
+# ------------------------------------------------------------------------------
+# 4. WATCHDOG DAEMON (Zero I/O Deadlock Protection)
+# ------------------------------------------------------------------------------
+watchdog_daemon() {
+    while [ ! -f "$STOP_FLAG" ]; do
+        sleep 15
+        if [ -s "$METRICS_FILE" ]; then
+            FILE_AGE=$(( $(date +%s) - $(stat -c %Y "$METRICS_FILE" 2>/dev/null || echo 0) ))
+            if [ "$FILE_AGE" -gt 15 ]; then
+                log_event "WATCHDOG_RESET"
+                touch "$STOP_FLAG"
+                kill $$ 2>/dev/null
+                break
+            fi
+        fi
+    done
+}
+
 input_daemon &
 INPUT_PID=$!
 engine_daemon &
 ENGINE_PID=$!
 dispatcher_daemon &
 DISPATCHER_PID=$!
+watchdog_daemon &
+WATCHDOG_PID=$!
 
 while [ ! -f "$STOP_FLAG" ]; do sleep 2; done
 
-kill -9 $INPUT_PID $ENGINE_PID $DISPATCHER_PID 2>/dev/null
+log_event "DAEMON_STOP"
+trap - EXIT INT TERM
+rmdir "$LOCKDIR" 2>/dev/null
+kill -9 $INPUT_PID $ENGINE_PID $DISPATCHER_PID $WATCHDOG_PID 2>/dev/null
 EOF
         chmod 755 "$BASE_DIR/zenith_daemon.sh"
         sh "$BASE_DIR/zenith_daemon.sh" &
@@ -1552,7 +1392,7 @@ view_turbo_pulse() {
         [ "${GPU_MIN:-0}" -eq 0 ] && gpu_str="${Z_GRAY}AUTO${NC}"
 
         echo -e "${Z_CYAN}╔══════════════════════════════════════════════════════╗${NC}"
-        echo -e "${Z_CYAN}║${NC} ${Z_WHITE}             ZENITH APEX TELEMETRY                  ${NC} ${Z_CYAN}║${NC}"
+        echo -e "${Z_CYAN}║${NC} ${Z_WHITE}             ZENITH PULSE TELEMETRY                 ${NC} ${Z_CYAN}║${NC}"
         echo -e "${Z_CYAN}╠══════════════════════════════════════════════════════╝${NC}"
         
         echo -e "${Z_CYAN}║${NC} ${Z_PURPLE}[ SYSTEM STATUS ]${NC}"
