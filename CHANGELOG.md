@@ -1,3 +1,11 @@
+# ZenithOS changelog
+# 1.0.7
+- Add HDR10+ 60FPS recording For beyond 0/1/2/X (thx @Creeeeger)
+- Add Face Recognition (thx @szucsy92 & @Creeeeger)
+- Update Kernel SU Next to V3.2.0
+- Add Zenith Mod  To solve the bootloop problem and add for system optimizations (thx @szucsy92 & @ATHAR585)
+
+
 # ExtremeROM Nexus changelog
 
 # 2.6.2
